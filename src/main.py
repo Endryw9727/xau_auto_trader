@@ -21,6 +21,7 @@ from pathlib import Path
 from src.backtesting.backtester import BacktestConfig, export_backtest_report, run_backtest
 from src.backtesting.metrics import metrics_to_dict
 from src.data_feed.market_data import load_csv_data
+from src.settings import load_settings
 from src.strategy.rules import StrategyConfig
 
 
@@ -34,6 +35,8 @@ def main() -> None:
     print("XAU Auto Trader - Local Backtest")
     print("=" * 60)
 
+    settings = load_settings()
+
     if not RAW_DATA_PATH.exists():
         print(f"CSV file not found: {RAW_DATA_PATH}")
         print("")
@@ -44,6 +47,11 @@ def main() -> None:
         print("Date, Open, High, Low, Close, Volume")
         return
 
+    print(f"Symbol: {settings.trading.symbol}")
+    print(f"Base timeframe: {settings.trading.base_timeframe}")
+    print(f"Live mode: {settings.trading.live_mode}")
+    print("")
+
     print(f"Loading market data from: {RAW_DATA_PATH}")
     df = load_csv_data(RAW_DATA_PATH)
 
@@ -53,10 +61,10 @@ def main() -> None:
     print("")
 
     strategy_config = StrategyConfig(
-        symbol="XAUUSD",
-        timeframe="15m",
-        min_adx=18.0,
-        min_risk_reward=2.0,
+        symbol=settings.trading.symbol,
+        timeframe=settings.trading.base_timeframe,
+        min_adx=settings.filters.min_adx,
+        min_risk_reward=settings.risk.min_risk_reward,
         atr_multiplier_sl=1.5,
         atr_multiplier_tp=3.0,
         rsi_buy_max=70.0,
@@ -64,15 +72,15 @@ def main() -> None:
     )
 
     backtest_config = BacktestConfig(
-        initial_balance=1000.0,
-        risk_per_trade=0.005,
-        max_daily_loss=0.02,
+        initial_balance=settings.backtest.initial_balance,
+        risk_per_trade=settings.risk.risk_per_trade,
+        max_daily_loss=settings.risk.max_daily_loss,
         max_open_trades=1,
-        max_consecutive_losses=3,
-        min_risk_reward=2.0,
+        max_consecutive_losses=settings.risk.max_consecutive_losses,
+        min_risk_reward=settings.risk.min_risk_reward,
         value_per_point=1.0,
-        commission_per_trade=0.0,
-        slippage_points=0.0,
+        commission_per_trade=settings.backtest.commission_per_trade,
+        slippage_points=settings.backtest.slippage_points,
         warmup_candles=220,
     )
 
