@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data_feed.market_data import load_csv_data
+from src.journal.trade_journal import save_trades_dataframe_to_db
 from src.execution.paper_trading_engine import (
     PaperTradingConfig,
     export_paper_trading_report,
@@ -84,6 +85,7 @@ def main() -> None:
     )
 
     trades_path = export_paper_trading_report(result)
+    inserted_trades = save_trades_dataframe_to_db(result.trades, mode="paper")
 
     print("")
     print("=" * 60)
@@ -98,6 +100,7 @@ def main() -> None:
     print(f"Breakeven:       {result.breakeven}")
     print("")
     print(f"Report exported: {trades_path}")
+    print(f"Trades saved to SQLite: {inserted_trades}")
     print("")
     print("Important: this is paper trading simulation only, not live trading.")
 

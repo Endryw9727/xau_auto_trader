@@ -21,6 +21,7 @@ from pathlib import Path
 from src.backtesting.backtester import BacktestConfig, export_backtest_report, run_backtest
 from src.backtesting.metrics import metrics_to_dict
 from src.data_feed.market_data import load_csv_data
+from src.journal.trade_journal import save_trades_dataframe_to_db
 from src.settings import load_settings
 from src.strategy.rules import StrategyConfig
 
@@ -92,6 +93,7 @@ def main() -> None:
     )
 
     trades_path, metrics_path = export_backtest_report(result, REPORT_DIR)
+    inserted_trades = save_trades_dataframe_to_db(result.trades, mode="backtest")
     metrics = metrics_to_dict(result.metrics)
 
     print("")
@@ -117,6 +119,7 @@ def main() -> None:
     print("Reports exported:")
     print(f"- {trades_path}")
     print(f"- {metrics_path}")
+    print(f"Trades saved to SQLite: {inserted_trades}")
     print("")
     print("Important: this is a backtest only, not live trading.")
 
