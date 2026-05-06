@@ -11,7 +11,7 @@ These SQLAlchemy models define the core tables used to store:
 Live trading is intentionally not implemented here.
 """
 
-from datetime import datetime, date
+from datetime import UTC, datetime, date
 from sqlalchemy import Boolean, Date, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -26,7 +26,7 @@ class Signal(Base):
     __tablename__ = "signals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
 
     symbol: Mapped[str] = mapped_column(String(20), nullable=False, default="XAUUSD")
     timeframe: Mapped[str] = mapped_column(String(10), nullable=False)
@@ -105,7 +105,7 @@ class EquityCurve(Base):
     __tablename__ = "equity_curve"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
 
     balance: Mapped[float] = mapped_column(Float, nullable=False)
     equity: Mapped[float] = mapped_column(Float, nullable=False)
@@ -119,7 +119,7 @@ class ErrorLog(Base):
     __tablename__ = "errors"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), nullable=False)
 
     module: Mapped[str] = mapped_column(String(100), nullable=False)
     error_type: Mapped[str] = mapped_column(String(100), nullable=False)

@@ -13,7 +13,7 @@ A signal is only an analytical output. Execution will be handled later by:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 import pandas as pd
@@ -223,4 +223,4 @@ def _get_timestamp(df: pd.DataFrame) -> datetime:
     if isinstance(latest_index, pd.Timestamp):
         return latest_index.to_pydatetime()
 
-    return datetime.utcnow()
+    return datetime.now(UTC)

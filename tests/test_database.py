@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.database.db import (
@@ -51,7 +51,7 @@ def test_save_and_read_trade(tmp_path):
     init_database(db_path)
 
     trade = Trade(
-        timestamp_open=datetime.utcnow(),
+        timestamp_open=datetime.now(UTC),
         timestamp_close=None,
         symbol="XAUUSD",
         side="BUY",
