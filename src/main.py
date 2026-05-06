@@ -65,10 +65,10 @@ def main() -> None:
         timeframe=settings.trading.base_timeframe,
         min_adx=settings.filters.min_adx,
         min_risk_reward=settings.risk.min_risk_reward,
-        atr_multiplier_sl=1.5,
-        atr_multiplier_tp=3.0,
-        rsi_buy_max=70.0,
-        rsi_sell_min=30.0,
+        atr_multiplier_sl=settings.strategy.atr_multiplier_sl,
+        atr_multiplier_tp=settings.strategy.atr_multiplier_tp,
+        rsi_buy_max=settings.strategy.rsi_buy_max,
+        rsi_sell_min=settings.strategy.rsi_sell_min,
     )
 
     backtest_config = BacktestConfig(
@@ -78,10 +78,10 @@ def main() -> None:
         max_open_trades=1,
         max_consecutive_losses=settings.risk.max_consecutive_losses,
         min_risk_reward=settings.risk.min_risk_reward,
-        value_per_point=1.0,
+        value_per_point=settings.risk.value_per_point,
         commission_per_trade=settings.backtest.commission_per_trade,
         slippage_points=settings.backtest.slippage_points,
-        warmup_candles=220,
+        warmup_candles=settings.backtest.warmup_candles,
     )
 
     print("Running backtest...")

@@ -5,7 +5,7 @@ Loads configuration from:
 - config.yaml
 - .env
 
-This centralizes trading, risk, filter, and backtest settings.
+This centralizes trading, strategy, risk, filter, and backtest settings.
 """
 
 from __future__ import annotations
@@ -32,6 +32,14 @@ class TradingSettings:
 
 
 @dataclass(frozen=True)
+class StrategySettings:
+    atr_multiplier_sl: float
+    atr_multiplier_tp: float
+    rsi_buy_max: float
+    rsi_sell_min: float
+
+
+@dataclass(frozen=True)
 class RiskSettings:
     risk_per_trade: float
     max_risk_per_trade: float
@@ -39,6 +47,7 @@ class RiskSettings:
     max_open_trades: int
     max_consecutive_losses: int
     min_risk_reward: float
+    value_per_point: float
 
 
 @dataclass(frozen=True)
@@ -54,11 +63,13 @@ class BacktestSettings:
     initial_balance: float
     commission_per_trade: float
     slippage_points: float
+    warmup_candles: int
 
 
 @dataclass(frozen=True)
 class AppSettings:
     trading: TradingSettings
+    strategy: StrategySettings
     risk: RiskSettings
     filters: FilterSettings
     backtest: BacktestSettings
@@ -95,6 +106,7 @@ def load_settings(config_path: str | Path = CONFIG_PATH, env_path: str | Path = 
     config = load_yaml_config(config_path)
 
     trading_config = config.get("trading", {})
+    strategy_config = config.get("strategy", {})
     risk_config = config.get("risk", {})
     filter_config = config.get("filters", {})
     backtest_config = config.get("backtest", {})
@@ -123,6 +135,12 @@ def load_settings(config_path: str | Path = CONFIG_PATH, env_path: str | Path = 
             base_timeframe=str(trading_config.get("base_timeframe", "15m")),
             confirmation_timeframes=list(trading_config.get("confirmation_timeframes", [])),
         ),
+        strategy=StrategySettings(
+            atr_multiplier_sl=float(strategy_config.get("atr_multiplier_sl", 1.5)),
+            atr_multiplier_tp=float(strategy_config.get("atr_multiplier_tp", 3.0)),
+            rsi_buy_max=float(strategy_config.get("rsi_buy_max", 70.0)),
+            rsi_sell_min=float(strategy_config.get("rsi_sell_min", 30.0)),
+        ),
         risk=RiskSettings(
             risk_per_trade=risk_per_trade,
             max_risk_per_trade=float(risk_config.get("max_risk_per_trade", 0.01)),
@@ -130,6 +148,7 @@ def load_settings(config_path: str | Path = CONFIG_PATH, env_path: str | Path = 
             max_open_trades=int(risk_config.get("max_open_trades", 2)),
             max_consecutive_losses=int(risk_config.get("max_consecutive_losses", 3)),
             min_risk_reward=float(risk_config.get("min_risk_reward", 2.0)),
+            value_per_point=float(risk_config.get("value_per_point", 1.0)),
         ),
         filters=FilterSettings(
             avoid_high_impact_news=bool(filter_config.get("avoid_high_impact_news", True)),
@@ -141,6 +160,7 @@ def load_settings(config_path: str | Path = CONFIG_PATH, env_path: str | Path = 
             initial_balance=account_balance,
             commission_per_trade=float(backtest_config.get("commission_per_trade", 0.0)),
             slippage_points=float(backtest_config.get("slippage_points", 0.0)),
+            warmup_candles=int(backtest_config.get("warmup_candles", 220)),
         ),
     )
 

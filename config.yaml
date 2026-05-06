@@ -7,6 +7,12 @@ trading:
     - "1h"
     - "4h"
 
+strategy:
+  atr_multiplier_sl: 1.5
+  atr_multiplier_tp: 3.0
+  rsi_buy_max: 70.0
+  rsi_sell_min: 30.0
+
 risk:
   risk_per_trade: 0.005
   max_risk_per_trade: 0.01
@@ -14,6 +20,7 @@ risk:
   max_open_trades: 2
   max_consecutive_losses: 3
   min_risk_reward: 2.0
+  value_per_point: 1.0
 
 sessions:
   london:
@@ -32,4 +39,5 @@ filters:
 backtest:
   initial_balance: 1000
   commission_per_trade: 0.0
-  slippage_points: 10
+  slippage_points: 0.0
+  warmup_candles: 220
