@@ -7,3 +7,9 @@ logs/*.log
 reports/*.html
 reports/*.csv
 .DS_Store
+
+# Generated local data and reports
+data/raw/*.csv
+data/processed/*.csv
+reports/backtests/*.csv
+reports/paper_trading/*.csv
