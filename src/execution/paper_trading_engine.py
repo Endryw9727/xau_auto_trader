@@ -26,6 +26,7 @@ from src.risk.risk_manager import AccountState, RiskConfig, evaluate_signal_risk
 from src.strategy.indicators import add_all_core_indicators
 from src.strategy.rules import StrategyConfig
 from src.strategy.signals import generate_signal
+from src.journal.trade_journal import save_signal_to_db
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,13 @@ def run_paper_trading_on_data(
         )
 
         decision = evaluate_signal_risk(risk_signal, risk_config, account_state)
+
+        save_signal_to_db(
+            signal,
+            db_path="data/database/trading.db",
+            approved_by_risk_manager=decision.approved,
+            blocked_reason=None if decision.approved else decision.reason,
+        )
 
         if not decision.approved:
             continue

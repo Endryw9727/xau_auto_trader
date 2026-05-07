@@ -112,3 +112,38 @@ def _parse_optional_string(value) -> str | None:
         return None
 
     return str(value)
+
+
+def save_signal_to_db(
+    signal,
+    db_path: str | Path = "data/database/trading.db",
+    approved_by_risk_manager: bool = False,
+    blocked_reason: str | None = None,
+) -> int:
+    """
+    Save a generated TradingSignal to SQLite.
+
+    Returns the inserted signal ID.
+    """
+    from src.database.models import Signal
+    from src.database.db import save_signal
+
+    init_database(db_path)
+
+    db_signal = Signal(
+        timestamp=signal.timestamp,
+        symbol=signal.symbol,
+        timeframe=signal.timeframe,
+        side=signal.side,
+        entry_price=signal.entry_price,
+        stop_loss=signal.stop_loss,
+        take_profit=signal.take_profit,
+        confidence=signal.confidence,
+        risk_reward=signal.risk_reward,
+        reason=signal.reason,
+        approved_by_risk_manager=approved_by_risk_manager,
+        blocked_reason=blocked_reason,
+    )
+
+    saved = save_signal(db_signal, db_path)
+    return int(saved.id)
