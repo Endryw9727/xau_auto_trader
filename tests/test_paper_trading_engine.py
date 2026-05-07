@@ -74,3 +74,27 @@ def test_export_paper_trading_report(tmp_path):
     path = export_paper_trading_report(result, output_dir=tmp_path)
 
     assert path.exists()
+
+
+def test_paper_trading_does_not_save_no_trade_signals_to_db(monkeypatch):
+    saved_signals = []
+
+    def fake_save_signal_to_db(signal, db_path="data/database/trading.db", approved_by_risk_manager=False, blocked_reason=None):
+        saved_signals.append(signal.side)
+        return len(saved_signals)
+
+    monkeypatch.setattr(
+        "src.execution.paper_trading_engine.save_signal_to_db",
+        fake_save_signal_to_db,
+    )
+
+    df = make_paper_test_data(rows=260)
+    config = PaperTradingConfig(
+        initial_balance=1000.0,
+        risk_per_trade=0.005,
+        warmup_candles=220,
+    )
+
+    run_paper_trading_on_data(df, paper_config=config)
+
+    assert "NO_TRADE" not in saved_signals

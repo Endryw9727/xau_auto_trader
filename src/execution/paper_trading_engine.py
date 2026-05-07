@@ -143,12 +143,13 @@ def run_paper_trading_on_data(
         decision = evaluate_signal_risk(risk_signal, risk_config, account_state)
 
         if save_signals:
-            save_signal_to_db(
-                signal,
-                db_path=db_path,
-                approved_by_risk_manager=decision.approved,
-                blocked_reason=None if decision.approved else decision.reason,
-            )
+            if signal.side in {"BUY", "SELL"}:
+                save_signal_to_db(
+                    signal,
+                    db_path=db_path,
+                    approved_by_risk_manager=decision.approved,
+                    blocked_reason=None if decision.approved else decision.reason,
+                )
 
         if not decision.approved:
             continue

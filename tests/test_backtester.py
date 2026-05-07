@@ -71,7 +71,7 @@ def test_calculate_max_consecutive():
     assert calculate_max_consecutive(pnl, positive=False) == 3
 
 
-def test_run_backtest_returns_result_and_saves_signals(tmp_path):
+def test_run_backtest_returns_result_and_skips_no_trade_signals(tmp_path):
     df = make_backtest_data()
     config = BacktestConfig(
         initial_balance=1000.0,
@@ -86,7 +86,7 @@ def test_run_backtest_returns_result_and_saves_signals(tmp_path):
     assert result.final_balance > 0
     assert hasattr(result, "trades")
     assert hasattr(result, "metrics")
-    assert len(saved_signals) > 0
+    assert len(saved_signals) == 0
 
 
 def test_run_backtest_deduplicates_saved_signals(tmp_path):
@@ -100,7 +100,7 @@ def test_run_backtest_deduplicates_saved_signals(tmp_path):
     run_backtest(df, backtest_config=config, db_path=db_path)
     second_count = len(get_all_signals(db_path))
 
-    assert first_count > 0
+    assert first_count == 0
     assert second_count == first_count
 
 
@@ -120,3 +120,29 @@ def test_export_backtest_report(tmp_path):
 
     assert trades_path.exists()
     assert metrics_path.exists()
+
+
+def test_backtest_does_not_save_no_trade_signals_to_db(tmp_path, monkeypatch):
+    from src.journal import trade_journal
+
+    saved_signals = []
+
+    def fake_save_signal_to_db(signal, db_path="data/database/trading.db", approved_by_risk_manager=False, blocked_reason=None):
+        saved_signals.append(signal.side)
+        return len(saved_signals)
+
+    monkeypatch.setattr(
+        "src.backtesting.backtester.save_signal_to_db",
+        fake_save_signal_to_db,
+    )
+
+    df = make_backtest_data(rows=260)
+    config = BacktestConfig(
+        initial_balance=1000.0,
+        risk_per_trade=0.005,
+        warmup_candles=220,
+    )
+
+    run_backtest(df, backtest_config=config)
+
+    assert "NO_TRADE" not in saved_signals

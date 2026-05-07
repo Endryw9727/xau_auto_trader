@@ -10,6 +10,7 @@ The database is local and intended for backtesting and paper trading.
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 from typing import Iterable
 
 from sqlalchemy import create_engine, select
@@ -37,6 +38,7 @@ def init_database(db_path: str | Path = DEFAULT_DB_PATH) -> None:
     """Create all database tables if they do not exist."""
     engine = create_db_engine(db_path)
     Base.metadata.create_all(engine)
+    _migrate_sqlite_schema(db_path)
 
 
 def get_session_factory(db_path: str | Path = DEFAULT_DB_PATH):
@@ -98,6 +100,9 @@ def save_error(error: ErrorLog, db_path: str | Path = DEFAULT_DB_PATH) -> ErrorL
 def get_all_signals(db_path: str | Path = DEFAULT_DB_PATH) -> list[Signal]:
     """Return all saved signals."""
     SessionLocal = get_session_factory(db_path)
+    init_database(db_path)
+    _migrate_sqlite_schema(db_path)
+
     with SessionLocal() as session:
         return list(session.scalars(select(Signal)).all())
 
@@ -114,3 +119,40 @@ def count_records(model: type[Base], db_path: str | Path = DEFAULT_DB_PATH) -> i
     SessionLocal = get_session_factory(db_path)
     with SessionLocal() as session:
         return len(list(session.scalars(select(model)).all()))
+
+
+def _migrate_sqlite_schema(db_path) -> None:
+    """
+    Apply lightweight SQLite migrations for existing local databases.
+
+    This keeps old local trading.db files compatible when models evolve.
+    """
+    path = Path(db_path)
+
+    if not path.exists():
+        return
+
+    with sqlite3.connect(path) as connection:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='signals'"
+        )
+        signals_table_exists = cursor.fetchone() is not None
+
+        if not signals_table_exists:
+            return
+
+        cursor.execute("PRAGMA table_info(signals)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        migrations = {
+            "approved_by_risk_manager": "ALTER TABLE signals ADD COLUMN approved_by_risk_manager BOOLEAN DEFAULT 0",
+            "blocked_reason": "ALTER TABLE signals ADD COLUMN blocked_reason TEXT",
+        }
+
+        for column_name, sql in migrations.items():
+            if column_name not in existing_columns:
+                cursor.execute(sql)
+
+        connection.commit()

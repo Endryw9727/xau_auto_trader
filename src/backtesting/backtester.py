@@ -83,17 +83,26 @@ def run_backtest(
     balance = backtest_config.initial_balance
     trades: list[dict] = []
     consecutive_losses = 0
+    current_day = None
+    current_daily_pnl = 0.0
 
     i = backtest_config.warmup_candles
 
     while i < len(data) - 1:
+        timestamp = data.index[i]
+
+        if current_day != timestamp.date():
+            current_day = timestamp.date()
+            current_daily_pnl = 0.0
+            consecutive_losses = 0
+
         window = data.iloc[: i + 1]
 
         signal = generate_signal(window, strategy_config)
         risk_signal = from_trading_signal(signal)
 
         account_state = AccountState(
-            current_daily_pnl=0.0,
+            current_daily_pnl=current_daily_pnl,
             open_trades_count=0,
             consecutive_losses=consecutive_losses,
         )
@@ -112,12 +121,13 @@ def run_backtest(
         decision = evaluate_signal_risk(risk_signal, risk_config, account_state)
 
         if save_signals:
-            save_signal_to_db(
-                signal,
-                db_path=db_path,
-                approved_by_risk_manager=decision.approved,
-                blocked_reason=None if decision.approved else decision.reason,
-            )
+            if signal.side in {"BUY", "SELL"}:
+                save_signal_to_db(
+                    signal,
+                    db_path=db_path,
+                    approved_by_risk_manager=decision.approved,
+                    blocked_reason=None if decision.approved else decision.reason,
+                )
 
         if not decision.approved:
             i += 1
@@ -137,6 +147,7 @@ def run_backtest(
         )
 
         balance += trade_result["profit_loss"]
+        current_daily_pnl += trade_result["profit_loss"]
 
         if trade_result["profit_loss"] < 0:
             consecutive_losses += 1
