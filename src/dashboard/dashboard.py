@@ -313,6 +313,139 @@ def render_strategy_analysis_tab() -> None:
     )
 
 
+
+def render_signals_tab() -> None:
+    """Render generated signals saved in SQLite."""
+    signals_db = load_sqlite_table(DATABASE_PATH, "signals")
+
+    if signals_db.empty:
+        st.warning("Nessun segnale trovato nel database SQLite.")
+        st.code("python -m src.main")
+        st.code("python scripts/run_paper_trading.py")
+        return
+
+    st.subheader("Segnali salvati in SQLite")
+
+    signals_db = signals_db.copy()
+
+    if "timestamp" in signals_db.columns:
+        signals_db["timestamp"] = pd.to_datetime(signals_db["timestamp"], errors="coerce")
+        signals_db = signals_db.sort_values("timestamp")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    total_signals = len(signals_db)
+    approved = int(signals_db["approved_by_risk_manager"].fillna(False).sum()) if "approved_by_risk_manager" in signals_db.columns else 0
+    blocked = total_signals - approved
+
+    avg_confidence = (
+        signals_db["confidence"].fillna(0).mean()
+        if "confidence" in signals_db.columns
+        else 0
+    )
+
+    avg_rr = (
+        signals_db["risk_reward"].dropna().mean()
+        if "risk_reward" in signals_db.columns and not signals_db["risk_reward"].dropna().empty
+        else 0
+    )
+
+    col1.metric("Segnali totali", total_signals)
+    col2.metric("Approvati", approved)
+    col3.metric("Bloccati", blocked)
+    col4.metric("Confidence media", f"{avg_confidence:.2f}")
+
+    col5, col6, col7, col8 = st.columns(4)
+
+    buy_count = int((signals_db["side"] == "BUY").sum()) if "side" in signals_db.columns else 0
+    sell_count = int((signals_db["side"] == "SELL").sum()) if "side" in signals_db.columns else 0
+    no_trade_count = int((signals_db["side"] == "NO_TRADE").sum()) if "side" in signals_db.columns else 0
+
+    col5.metric("BUY", buy_count)
+    col6.metric("SELL", sell_count)
+    col7.metric("NO_TRADE", no_trade_count)
+    col8.metric("RR medio", f"{avg_rr:.2f}")
+
+    st.divider()
+
+    if "side" in signals_db.columns:
+        st.subheader("Distribuzione segnali")
+        st.bar_chart(signals_db["side"].value_counts())
+
+    st.divider()
+
+    if "approved_by_risk_manager" in signals_db.columns:
+        st.subheader("Approvati vs bloccati")
+        approval_counts = signals_db["approved_by_risk_manager"].map(
+            {True: "Approvato", False: "Bloccato"}
+        ).value_counts()
+        st.bar_chart(approval_counts)
+
+    st.divider()
+
+    st.subheader("Motivi di blocco")
+
+    if "blocked_reason" in signals_db.columns:
+        blocked_reasons = signals_db["blocked_reason"].dropna()
+
+        if blocked_reasons.empty:
+            st.info("Nessun motivo di blocco presente.")
+        else:
+            blocked_reason_counts = (
+                blocked_reasons
+                .value_counts()
+                .rename_axis("blocked_reason")
+                .reset_index(name="count")
+            )
+
+            st.dataframe(
+                blocked_reason_counts,
+                width="stretch",
+            )
+
+    st.divider()
+
+    st.subheader("Filtri segnali")
+
+    filtered = signals_db.copy()
+
+    if "side" in filtered.columns:
+        sides = sorted(filtered["side"].dropna().unique().tolist())
+        selected_sides = st.multiselect("Side", sides, default=sides)
+
+        if selected_sides:
+            filtered = filtered[filtered["side"].isin(selected_sides)]
+
+    if "approved_by_risk_manager" in filtered.columns:
+        approval_options = ["Approvati", "Bloccati"]
+        selected_approval = st.multiselect(
+            "Stato risk manager",
+            approval_options,
+            default=approval_options,
+        )
+
+        if selected_approval != approval_options:
+            if selected_approval == ["Approvati"]:
+                filtered = filtered[filtered["approved_by_risk_manager"] == True]
+            elif selected_approval == ["Bloccati"]:
+                filtered = filtered[filtered["approved_by_risk_manager"] == False]
+
+    st.divider()
+
+    st.subheader("Tabella segnali SQLite")
+    st.dataframe(filtered, width="stretch")
+
+    st.divider()
+
+    csv_data = filtered.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="Scarica segnali filtrati CSV",
+        data=csv_data,
+        file_name="sqlite_signals_filtered.csv",
+        mime="text/csv",
+    )
+
+
 def render_safety_tab() -> None:
     """Render project safety tab."""
     st.subheader("Sicurezza progetto")
@@ -351,8 +484,8 @@ def main() -> None:
     st.title("📊 XAU Auto Trader Dashboard")
     st.caption("Dashboard locale per backtest, paper trading e database SQLite.")
 
-    tab_backtest, tab_database, tab_analysis, tab_safety = st.tabs(
-        ["Backtest CSV", "Database SQLite", "Analisi Strategia", "Sicurezza Live"]
+    tab_backtest, tab_database, tab_signals, tab_analysis, tab_safety = st.tabs(
+        ["Backtest CSV", "Database SQLite", "Segnali SQLite", "Analisi Strategia", "Sicurezza Live"]
     )
 
     with tab_backtest:
@@ -360,6 +493,9 @@ def main() -> None:
 
     with tab_database:
         render_database_tab()
+
+    with tab_signals:
+        render_signals_tab()
 
     with tab_analysis:
         render_strategy_analysis_tab()
