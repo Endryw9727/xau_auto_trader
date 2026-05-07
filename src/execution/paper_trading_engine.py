@@ -63,6 +63,8 @@ def run_paper_trading_on_data(
     df: pd.DataFrame,
     strategy_config: StrategyConfig | None = None,
     paper_config: PaperTradingConfig | None = None,
+    db_path: str | Path = "data/database/trading.db",
+    save_signals: bool = True,
 ) -> PaperTradingResult:
     """
     Run paper trading simulation candle by candle.
@@ -140,12 +142,13 @@ def run_paper_trading_on_data(
 
         decision = evaluate_signal_risk(risk_signal, risk_config, account_state)
 
-        save_signal_to_db(
-            signal,
-            db_path="data/database/trading.db",
-            approved_by_risk_manager=decision.approved,
-            blocked_reason=None if decision.approved else decision.reason,
-        )
+        if save_signals:
+            save_signal_to_db(
+                signal,
+                db_path=db_path,
+                approved_by_risk_manager=decision.approved,
+                blocked_reason=None if decision.approved else decision.reason,
+            )
 
         if not decision.approved:
             continue

@@ -12,9 +12,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+from sqlalchemy import select
 
-from src.database.db import init_database, save_trade
-from src.database.models import Trade
+from src.database.db import get_session_factory, init_database, save_signal, save_trade
+from src.database.models import Signal, Trade
 
 
 def save_trades_dataframe_to_db(
@@ -26,6 +27,7 @@ def save_trades_dataframe_to_db(
     default_strategy_name: str = "default",
     default_risk_percent: float = 0.0,
     default_risk_amount: float = 0.0,
+    deduplicate: bool = True,
 ) -> int:
     """
     Save a trades DataFrame to the SQLite database.
@@ -61,6 +63,9 @@ def save_trades_dataframe_to_db(
             reason_entry=_parse_optional_string(row.get("reason_entry")),
             reason_exit=_parse_optional_string(row.get("reason_exit")),
         )
+
+        if deduplicate and _find_existing_trade_id(trade, db_path) is not None:
+            continue
 
         save_trade(trade, db_path)
         inserted += 1
@@ -119,16 +124,25 @@ def save_signal_to_db(
     db_path: str | Path = "data/database/trading.db",
     approved_by_risk_manager: bool = False,
     blocked_reason: str | None = None,
+    deduplicate: bool = True,
 ) -> int:
     """
     Save a generated TradingSignal to SQLite.
 
-    Returns the inserted signal ID.
+    Returns the inserted or existing signal ID.
     """
-    from src.database.models import Signal
-    from src.database.db import save_signal
-
     init_database(db_path)
+
+    if deduplicate:
+        existing_signal_id = _find_existing_signal_id(
+            signal=signal,
+            db_path=db_path,
+            approved_by_risk_manager=approved_by_risk_manager,
+            blocked_reason=blocked_reason,
+        )
+
+        if existing_signal_id is not None:
+            return existing_signal_id
 
     db_signal = Signal(
         timestamp=signal.timestamp,
@@ -147,3 +161,81 @@ def save_signal_to_db(
 
     saved = save_signal(db_signal, db_path)
     return int(saved.id)
+
+
+def _find_existing_signal_id(
+    signal,
+    db_path: str | Path,
+    approved_by_risk_manager: bool,
+    blocked_reason: str | None,
+) -> int | None:
+    """Return an existing matching signal ID to avoid exact duplicate rows."""
+    SessionLocal = get_session_factory(db_path)
+
+    with SessionLocal() as session:
+        statement = (
+            select(Signal.id)
+            .where(
+                Signal.timestamp == signal.timestamp,
+                Signal.symbol == signal.symbol,
+                Signal.timeframe == signal.timeframe,
+                Signal.side == signal.side,
+                _optional_equal(Signal.entry_price, signal.entry_price),
+                _optional_equal(Signal.stop_loss, signal.stop_loss),
+                _optional_equal(Signal.take_profit, signal.take_profit),
+                _optional_equal(Signal.confidence, signal.confidence),
+                _optional_equal(Signal.risk_reward, signal.risk_reward),
+                _optional_equal(Signal.reason, signal.reason),
+                Signal.approved_by_risk_manager == approved_by_risk_manager,
+                _optional_equal(Signal.blocked_reason, blocked_reason),
+            )
+            .limit(1)
+        )
+
+        existing_id = session.scalar(statement)
+
+    return int(existing_id) if existing_id is not None else None
+
+
+def _find_existing_trade_id(trade: Trade, db_path: str | Path) -> int | None:
+    """Return an existing matching trade ID to avoid exact duplicate rows."""
+    SessionLocal = get_session_factory(db_path)
+
+    with SessionLocal() as session:
+        statement = (
+            select(Trade.id)
+            .where(
+                Trade.timestamp_open == trade.timestamp_open,
+                _optional_equal(Trade.timestamp_close, trade.timestamp_close),
+                Trade.symbol == trade.symbol,
+                Trade.side == trade.side,
+                Trade.timeframe == trade.timeframe,
+                Trade.entry_price == trade.entry_price,
+                Trade.stop_loss == trade.stop_loss,
+                Trade.take_profit == trade.take_profit,
+                _optional_equal(Trade.exit_price, trade.exit_price),
+                Trade.position_size == trade.position_size,
+                Trade.risk_percent == trade.risk_percent,
+                Trade.risk_amount == trade.risk_amount,
+                _optional_equal(Trade.result, trade.result),
+                _optional_equal(Trade.profit_loss, trade.profit_loss),
+                _optional_equal(Trade.risk_reward, trade.risk_reward),
+                Trade.strategy_name == trade.strategy_name,
+                Trade.mode == trade.mode,
+                _optional_equal(Trade.reason_entry, trade.reason_entry),
+                _optional_equal(Trade.reason_exit, trade.reason_exit),
+            )
+            .limit(1)
+        )
+
+        existing_id = session.scalar(statement)
+
+    return int(existing_id) if existing_id is not None else None
+
+
+def _optional_equal(column, value):
+    """Build a SQLAlchemy equality condition that handles NULL values."""
+    if value is None or pd.isna(value):
+        return column.is_(None)
+
+    return column == value

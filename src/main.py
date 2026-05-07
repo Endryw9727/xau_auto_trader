@@ -61,29 +61,9 @@ def main() -> None:
     print(f"To:   {df.index.max()}")
     print("")
 
-    strategy_config = StrategyConfig(
-        symbol=settings.trading.symbol,
-        timeframe=settings.trading.base_timeframe,
-        min_adx=settings.filters.min_adx,
-        min_risk_reward=settings.risk.min_risk_reward,
-        atr_multiplier_sl=settings.strategy.atr_multiplier_sl,
-        atr_multiplier_tp=settings.strategy.atr_multiplier_tp,
-        rsi_buy_max=settings.strategy.rsi_buy_max,
-        rsi_sell_min=settings.strategy.rsi_sell_min,
-    )
+    strategy_config = build_strategy_config(settings)
 
-    backtest_config = BacktestConfig(
-        initial_balance=settings.backtest.initial_balance,
-        risk_per_trade=settings.risk.risk_per_trade,
-        max_daily_loss=settings.risk.max_daily_loss,
-        max_open_trades=1,
-        max_consecutive_losses=settings.risk.max_consecutive_losses,
-        min_risk_reward=settings.risk.min_risk_reward,
-        value_per_point=settings.risk.value_per_point,
-        commission_per_trade=settings.backtest.commission_per_trade,
-        slippage_points=settings.backtest.slippage_points,
-        warmup_candles=settings.backtest.warmup_candles,
-    )
+    backtest_config = build_backtest_config(settings)
 
     print("Running backtest...")
     result = run_backtest(
@@ -122,6 +102,37 @@ def main() -> None:
     print(f"Trades saved to SQLite: {inserted_trades}")
     print("")
     print("Important: this is a backtest only, not live trading.")
+
+
+def build_strategy_config(settings) -> StrategyConfig:
+    """Build strategy config from central project settings."""
+    return StrategyConfig(
+        symbol=settings.trading.symbol,
+        timeframe=settings.trading.base_timeframe,
+        min_adx=settings.filters.min_adx,
+        min_risk_reward=settings.risk.min_risk_reward,
+        atr_multiplier_sl=settings.strategy.atr_multiplier_sl,
+        atr_multiplier_tp=settings.strategy.atr_multiplier_tp,
+        rsi_buy_max=settings.strategy.rsi_buy_max,
+        rsi_sell_min=settings.strategy.rsi_sell_min,
+    )
+
+
+def build_backtest_config(settings) -> BacktestConfig:
+    """Build backtest config from central project settings."""
+    return BacktestConfig(
+        initial_balance=settings.backtest.initial_balance,
+        risk_per_trade=settings.risk.risk_per_trade,
+        max_risk_per_trade=settings.risk.max_risk_per_trade,
+        max_daily_loss=settings.risk.max_daily_loss,
+        max_open_trades=settings.risk.max_open_trades,
+        max_consecutive_losses=settings.risk.max_consecutive_losses,
+        min_risk_reward=settings.risk.min_risk_reward,
+        value_per_point=settings.risk.value_per_point,
+        commission_per_trade=settings.backtest.commission_per_trade,
+        slippage_points=settings.backtest.slippage_points,
+        warmup_candles=settings.backtest.warmup_candles,
+    )
 
 
 if __name__ == "__main__":

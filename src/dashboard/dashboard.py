@@ -24,6 +24,7 @@ import streamlit as st
 TRADES_PATH = Path("reports/backtests/trades.csv")
 METRICS_PATH = Path("reports/backtests/metrics.csv")
 DATABASE_PATH = Path("data/database/trading.db")
+SQLITE_TABLES = {"trades", "signals", "daily_stats", "equity_curve", "errors"}
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -45,9 +46,16 @@ def load_sqlite_table(db_path: Path, table_name: str) -> pd.DataFrame:
     if not db_path.exists():
         return pd.DataFrame()
 
+    if table_name not in SQLITE_TABLES:
+        raise ValueError(f"Unsupported SQLite table: {table_name}")
+
     with sqlite3.connect(db_path) as connection:
-        query = f"SELECT * FROM {table_name}"
-        return pd.read_sql_query(query, connection)
+        query = f'SELECT * FROM "{table_name}"'
+
+        try:
+            return pd.read_sql_query(query, connection)
+        except (sqlite3.Error, pd.errors.DatabaseError):
+            return pd.DataFrame()
 
 
 def render_backtest_report_tab() -> None:
