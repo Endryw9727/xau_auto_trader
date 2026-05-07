@@ -14,14 +14,22 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+import sys
 
 import pandas as pd
 import streamlit as st
 
 
+
 TRADES_PATH = Path("reports/backtests/trades.csv")
 METRICS_PATH = Path("reports/backtests/metrics.csv")
 DATABASE_PATH = Path("data/database/trading.db")
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.analysis.session_analysis import add_session_column, calculate_session_summary
 
 
 def load_csv(path: Path) -> pd.DataFrame:
@@ -446,6 +454,63 @@ def render_signals_tab() -> None:
     )
 
 
+
+def render_session_analysis_tab() -> None:
+    """Render session analysis from SQLite trades."""
+    trades_db = load_sqlite_table(DATABASE_PATH, "trades")
+
+    if trades_db.empty:
+        st.warning("Nessun trade trovato nel database SQLite.")
+        st.code("python -m src.main")
+        st.code("python scripts/run_paper_trading.py")
+        return
+
+    st.subheader("Analisi per sessione")
+
+    if "timestamp_open" not in trades_db.columns or "profit_loss" not in trades_db.columns:
+        st.error("Servono le colonne timestamp_open e profit_loss.")
+        return
+
+    trades_with_session = add_session_column(trades_db, timestamp_column="timestamp_open")
+    summary = calculate_session_summary(trades_with_session)
+
+    st.subheader("Riepilogo sessioni")
+    st.dataframe(summary, width="stretch")
+
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**P&L per sessione**")
+        if not summary.empty:
+            st.bar_chart(summary.set_index("session")["net_profit"])
+
+    with col2:
+        st.markdown("**Numero trade per sessione**")
+        if not summary.empty:
+            st.bar_chart(summary.set_index("session")["total_trades"])
+
+    st.divider()
+
+    st.subheader("Filtra trade per sessione")
+
+    sessions = sorted(trades_with_session["session"].dropna().unique().tolist())
+    selected_sessions = st.multiselect("Sessioni", sessions, default=sessions)
+
+    filtered = trades_with_session.copy()
+
+    if selected_sessions:
+        filtered = filtered[filtered["session"].isin(selected_sessions)]
+
+    st.dataframe(filtered, width="stretch")
+
+    st.warning(
+        "Per ora le sessioni sono calcolate su fasce orarie semplici. "
+        "Più avanti possiamo gestire timezone e ora legale in modo più preciso."
+    )
+
+
 def render_safety_tab() -> None:
     """Render project safety tab."""
     st.subheader("Sicurezza progetto")
@@ -484,8 +549,8 @@ def main() -> None:
     st.title("📊 XAU Auto Trader Dashboard")
     st.caption("Dashboard locale per backtest, paper trading e database SQLite.")
 
-    tab_backtest, tab_database, tab_signals, tab_analysis, tab_safety = st.tabs(
-        ["Backtest CSV", "Database SQLite", "Segnali SQLite", "Analisi Strategia", "Sicurezza Live"]
+    tab_backtest, tab_database, tab_signals, tab_analysis, tab_sessions, tab_safety = st.tabs(
+        ["Backtest CSV", "Database SQLite", "Segnali SQLite", "Analisi Strategia", "Sessioni", "Sicurezza Live"]
     )
 
     with tab_backtest:
@@ -499,6 +564,9 @@ def main() -> None:
 
     with tab_analysis:
         render_strategy_analysis_tab()
+
+    with tab_sessions:
+        render_session_analysis_tab()
 
     with tab_safety:
         render_safety_tab()
