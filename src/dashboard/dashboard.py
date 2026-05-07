@@ -184,6 +184,135 @@ def render_database_tab() -> None:
     )
 
 
+
+def calculate_profit_factor(df: pd.DataFrame) -> float:
+    """Calculate profit factor from profit_loss column."""
+    if df.empty or "profit_loss" not in df.columns:
+        return 0.0
+
+    pnl = df["profit_loss"].fillna(0)
+    gross_profit = pnl[pnl > 0].sum()
+    gross_loss = abs(pnl[pnl < 0].sum())
+
+    if gross_loss == 0:
+        return float("inf") if gross_profit > 0 else 0.0
+
+    return float(gross_profit / gross_loss)
+
+
+def render_strategy_analysis_tab() -> None:
+    """Render strategy analysis from SQLite trades."""
+    trades_db = load_sqlite_table(DATABASE_PATH, "trades")
+
+    if trades_db.empty:
+        st.warning("Nessun trade trovato nel database SQLite.")
+        st.code("python -m src.main")
+        st.code("python scripts/run_paper_trading.py")
+        return
+
+    st.subheader("Analisi Strategia da SQLite")
+
+    if "profit_loss" not in trades_db.columns:
+        st.error("Colonna profit_loss non trovata nel database.")
+        return
+
+    trades_db = trades_db.copy()
+    trades_db["profit_loss"] = pd.to_numeric(trades_db["profit_loss"], errors="coerce").fillna(0)
+
+    if "mode" not in trades_db.columns:
+        trades_db["mode"] = "unknown"
+
+    summary_rows = []
+
+    for mode, group in trades_db.groupby("mode"):
+        total_trades = len(group)
+        wins = int((group["profit_loss"] > 0).sum())
+        losses = int((group["profit_loss"] < 0).sum())
+        breakeven = int((group["profit_loss"] == 0).sum())
+        net_profit = float(group["profit_loss"].sum())
+        win_rate = wins / total_trades * 100 if total_trades else 0.0
+        profit_factor = calculate_profit_factor(group)
+        average_trade = float(group["profit_loss"].mean()) if total_trades else 0.0
+        best_trade = float(group["profit_loss"].max()) if total_trades else 0.0
+        worst_trade = float(group["profit_loss"].min()) if total_trades else 0.0
+
+        summary_rows.append(
+            {
+                "mode": mode,
+                "total_trades": total_trades,
+                "wins": wins,
+                "losses": losses,
+                "breakeven": breakeven,
+                "win_rate": win_rate,
+                "profit_factor": profit_factor,
+                "net_profit": net_profit,
+                "average_trade": average_trade,
+                "best_trade": best_trade,
+                "worst_trade": worst_trade,
+            }
+        )
+
+    summary = pd.DataFrame(summary_rows)
+
+    st.subheader("Riepilogo per modalità")
+    st.dataframe(summary, width="stretch")
+
+    st.divider()
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    total_trades_all = len(trades_db)
+    net_profit_all = float(trades_db["profit_loss"].sum())
+    wins_all = int((trades_db["profit_loss"] > 0).sum())
+    win_rate_all = wins_all / total_trades_all * 100 if total_trades_all else 0.0
+    profit_factor_all = calculate_profit_factor(trades_db)
+
+    col1.metric("Trade totali", total_trades_all)
+    col2.metric("P&L totale", f"{net_profit_all:.2f}")
+    col3.metric("Win rate totale", f"{win_rate_all:.2f}%")
+    col4.metric("Profit factor totale", f"{profit_factor_all:.2f}")
+
+    st.divider()
+
+    st.subheader("Equity Curve per modalità")
+
+    if "timestamp_close" in trades_db.columns:
+        trades_db["timestamp_close"] = pd.to_datetime(trades_db["timestamp_close"], errors="coerce")
+        trades_db = trades_db.sort_values("timestamp_close")
+
+    modes = sorted(trades_db["mode"].dropna().unique().tolist())
+
+    selected_mode = st.selectbox("Scegli modalità", modes)
+
+    mode_trades = trades_db[trades_db["mode"] == selected_mode].copy()
+
+    if not mode_trades.empty:
+        mode_trades["equity"] = 1000 + mode_trades["profit_loss"].cumsum()
+        st.line_chart(mode_trades["equity"])
+
+    st.divider()
+
+    st.subheader("Migliori e peggiori trade")
+
+    col_best, col_worst = st.columns(2)
+
+    best_trades = trades_db.sort_values("profit_loss", ascending=False).head(10)
+    worst_trades = trades_db.sort_values("profit_loss", ascending=True).head(10)
+
+    with col_best:
+        st.markdown("**Top 10 trade migliori**")
+        st.dataframe(best_trades, width="stretch")
+
+    with col_worst:
+        st.markdown("**Top 10 trade peggiori**")
+        st.dataframe(worst_trades, width="stretch")
+
+    st.warning(
+        "Questa analisi è utile solo se i dati sono reali o paper trading serio. "
+        "Con dati finti serve soltanto a verificare che il software funzioni."
+    )
+
+
 def render_safety_tab() -> None:
     """Render project safety tab."""
     st.subheader("Sicurezza progetto")
@@ -222,8 +351,8 @@ def main() -> None:
     st.title("📊 XAU Auto Trader Dashboard")
     st.caption("Dashboard locale per backtest, paper trading e database SQLite.")
 
-    tab_backtest, tab_database, tab_safety = st.tabs(
-        ["Backtest CSV", "Database SQLite", "Sicurezza Live"]
+    tab_backtest, tab_database, tab_analysis, tab_safety = st.tabs(
+        ["Backtest CSV", "Database SQLite", "Analisi Strategia", "Sicurezza Live"]
     )
 
     with tab_backtest:
@@ -231,6 +360,9 @@ def main() -> None:
 
     with tab_database:
         render_database_tab()
+
+    with tab_analysis:
+        render_strategy_analysis_tab()
 
     with tab_safety:
         render_safety_tab()
