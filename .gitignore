@@ -15,3 +15,4 @@ reports/backtests/*.csv
 reports/paper_trading/*.csv
 reports/strategy_lab/*.csv
 reports/features/*.csv
+reports/analysis/*.csv
