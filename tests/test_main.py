@@ -2,6 +2,7 @@ from src.main import REPORT_DIR, RAW_DATA_PATH, build_backtest_config, build_str
 from src.settings import (
     AppSettings,
     BacktestSettings,
+    SessionSettings,
     FilterSettings,
     RiskSettings,
     StrategySettings,
@@ -36,6 +37,9 @@ def test_main_builds_configs_from_settings():
             max_consecutive_losses=4,
             min_risk_reward=1.8,
             value_per_point=2.0,
+        ),
+        sessions=SessionSettings(
+            enabled_sessions=["Asia", "New York", "Off Session"],
         ),
         filters=FilterSettings(
             avoid_high_impact_news=True,

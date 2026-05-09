@@ -23,6 +23,7 @@ from src.backtesting.metrics import BacktestMetrics, calculate_metrics, metrics_
 from src.risk.risk_manager import AccountState, RiskConfig, evaluate_signal_risk, from_trading_signal
 from src.strategy.indicators import add_all_core_indicators
 from src.strategy.rules import StrategyConfig
+from src.analysis.session_analysis import classify_hour_to_session
 from src.strategy.signals import generate_signal
 from src.journal.trade_journal import save_signal_to_db
 
@@ -42,6 +43,7 @@ class BacktestConfig:
     commission_per_trade: float = 0.0
     slippage_points: float = 0.0
     warmup_candles: int = 220
+    allowed_sessions: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,15 @@ def run_backtest(
             current_day = timestamp.date()
             current_daily_pnl = 0.0
             consecutive_losses = 0
+
+        session_name = classify_hour_to_session(timestamp.hour)
+
+        if (
+            backtest_config.allowed_sessions is not None
+            and session_name not in backtest_config.allowed_sessions
+        ):
+            i += 1
+            continue
 
         window = data.iloc[: i + 1]
 

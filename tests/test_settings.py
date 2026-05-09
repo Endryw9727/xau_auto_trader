@@ -25,6 +25,12 @@ risk:
   min_risk_reward: 2.0
   value_per_point: 1.0
 
+sessions:
+  enabled_sessions:
+    - "Asia"
+    - "New York"
+    - "Off Session"
+
 filters:
   avoid_high_impact_news: true
   max_spread_points: 30
@@ -68,6 +74,7 @@ def test_load_settings_from_config(tmp_path):
     assert settings.strategy.rsi_sell_min == 30.0
     assert settings.risk.risk_per_trade == 0.005
     assert settings.risk.value_per_point == 1.0
+    assert settings.sessions.enabled_sessions == ["Asia", "New York", "Off Session"]
     assert settings.backtest.initial_balance == 1000
     assert settings.backtest.warmup_candles == 220
 

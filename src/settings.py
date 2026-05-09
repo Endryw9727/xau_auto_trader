@@ -51,6 +51,11 @@ class RiskSettings:
 
 
 @dataclass(frozen=True)
+class SessionSettings:
+    enabled_sessions: list[str]
+
+
+@dataclass(frozen=True)
 class FilterSettings:
     avoid_high_impact_news: bool
     max_spread_points: float
@@ -71,6 +76,7 @@ class AppSettings:
     trading: TradingSettings
     strategy: StrategySettings
     risk: RiskSettings
+    sessions: SessionSettings
     filters: FilterSettings
     backtest: BacktestSettings
 
@@ -108,6 +114,7 @@ def load_settings(config_path: str | Path = CONFIG_PATH, env_path: str | Path = 
     trading_config = config.get("trading", {})
     strategy_config = config.get("strategy", {})
     risk_config = config.get("risk", {})
+    session_config = config.get("sessions", {})
     filter_config = config.get("filters", {})
     backtest_config = config.get("backtest", {})
 
@@ -149,6 +156,14 @@ def load_settings(config_path: str | Path = CONFIG_PATH, env_path: str | Path = 
             max_consecutive_losses=int(risk_config.get("max_consecutive_losses", 3)),
             min_risk_reward=float(risk_config.get("min_risk_reward", 2.0)),
             value_per_point=float(risk_config.get("value_per_point", 1.0)),
+        ),
+        sessions=SessionSettings(
+            enabled_sessions=list(
+                session_config.get(
+                    "enabled_sessions",
+                    ["Asia", "London", "New York", "Off Session"],
+                )
+            ),
         ),
         filters=FilterSettings(
             avoid_high_impact_news=bool(filter_config.get("avoid_high_impact_news", True)),

@@ -23,6 +23,10 @@ risk:
   value_per_point: 1.0
 
 sessions:
+  enabled_sessions:
+    - "Asia"
+    - "New York"
+    - "Off Session"
   london:
     start: "08:00"
     end: "11:30"

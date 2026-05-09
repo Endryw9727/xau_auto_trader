@@ -51,6 +51,7 @@ def main() -> None:
     print(f"Symbol: {settings.trading.symbol}")
     print(f"Base timeframe: {settings.trading.base_timeframe}")
     print(f"Live mode: {settings.trading.live_mode}")
+    print(f"Allowed sessions: {settings.sessions.enabled_sessions}")
     print("")
 
     print(f"Loading market data from: {RAW_DATA_PATH}")
@@ -132,6 +133,7 @@ def build_backtest_config(settings) -> BacktestConfig:
         commission_per_trade=settings.backtest.commission_per_trade,
         slippage_points=settings.backtest.slippage_points,
         warmup_candles=settings.backtest.warmup_candles,
+        allowed_sessions=settings.sessions.enabled_sessions,
     )
 
 
