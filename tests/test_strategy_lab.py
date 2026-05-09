@@ -3,7 +3,7 @@ import pandas as pd
 from src.backtesting.backtester import BacktestConfig
 from src.lab.strategy_lab import StrategyVariant, run_strategy_lab as run_legacy_strategy_lab
 from src.strategy.rules import StrategyConfig
-from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4
+from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4, strategy_v5
 from src.strategy_lab.lab import COMPARISON_FILENAME, get_default_strategy_specs, run_strategy_lab
 
 
@@ -127,6 +127,43 @@ def test_strategy_v4_blocks_unclear_momentum():
     assert "momentum filter blocked" in signal.reason
 
 
+def make_feature_filtered_signal_data() -> pd.DataFrame:
+    data = make_signal_ready_data()
+    data["trend_regime"] = "bullish"
+    data["candle_regime"] = "normal"
+    data["adx"] = 22.0
+    return data
+
+
+def test_strategy_v5_generates_valid_feature_filtered_signal():
+    signal = strategy_v5.generate_signal(make_feature_filtered_signal_data(), StrategyConfig())
+
+    assert signal.side == "BUY"
+    assert signal.stop_loss is not None
+    assert signal.take_profit is not None
+    assert "Feature filtered" in signal.reason
+
+
+def test_strategy_v5_blocks_neutral_trend_regime():
+    data = make_feature_filtered_signal_data()
+    data.loc[data.index[-1], "trend_regime"] = "neutral"
+
+    signal = strategy_v5.generate_signal(data, StrategyConfig())
+
+    assert signal.side == "NO_TRADE"
+    assert "neutral trend regime" in signal.reason
+
+
+def test_strategy_v5_blocks_impulse_candle_regime():
+    data = make_feature_filtered_signal_data()
+    data.loc[data.index[-1], "candle_regime"] = "impulse"
+
+    signal = strategy_v5.generate_signal(data, StrategyConfig())
+
+    assert signal.side == "NO_TRADE"
+    assert "candle regime=impulse" in signal.reason
+
+
 def test_strategy_lab_exports_comparison_csv(tmp_path):
     df = make_strategy_lab_data()
     config = BacktestConfig(warmup_candles=60, allowed_sessions=None)
@@ -143,6 +180,7 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
         "session_filtered_strategy",
         "mtf_momentum_pullback_strategy",
         "mtf_strict_offsession_strategy",
+        "mtf_feature_filtered_strategy",
     }
     saved = pd.read_csv(tmp_path / COMPARISON_FILENAME)
     strict_row = saved[saved["strategy_name"] == "mtf_strict_offsession_strategy"].iloc[0]
@@ -151,7 +189,7 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
     assert result.report_path.exists()
     assert set(result.comparison["strategy_name"]) == expected_names
     assert set(saved["strategy_name"]) == expected_names
-    assert len(get_default_strategy_specs()) == 4
+    assert len(get_default_strategy_specs()) == 5
     assert "net_profit" in saved.columns
     assert "max_drawdown" in saved.columns
     assert strict_row["risk_per_trade"] == 0.0025
@@ -162,6 +200,7 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
 def test_strategy_lab_research_only_without_live_or_api_references():
     checked_files = [
         "src/strategy_lab/strategy_v4.py",
+        "src/strategy_lab/strategy_v5.py",
         "src/strategy_lab/lab.py",
         "scripts/run_strategy_lab.py",
     ]

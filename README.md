@@ -112,6 +112,7 @@ Strategie iniziali:
 - session_filtered_strategy
 - mtf_momentum_pullback_strategy
 - mtf_strict_offsession_strategy
+- mtf_feature_filtered_strategy
 
 Output:
 - reports/strategy_lab/strategy_comparison.csv

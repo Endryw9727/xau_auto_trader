@@ -23,6 +23,7 @@ from src.strategy_lab.lab import run_strategy_lab
 
 
 RAW_DATA_PATH = Path("data/raw/xauusd.csv")
+QUICK_CANDLES = 20000
 
 
 def main() -> None:

@@ -117,7 +117,7 @@ def run_backtest(
             i += 1
             continue
 
-        window = data.iloc[: i + 1]
+        window = data.iloc[max(0, i - 500): i + 1]
 
         signal = signal_generator(window, strategy_config)
         risk_signal = from_trading_signal(signal)
