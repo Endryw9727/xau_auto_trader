@@ -14,6 +14,7 @@ This is not live trading.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,8 +25,11 @@ from src.risk.risk_manager import AccountState, RiskConfig, evaluate_signal_risk
 from src.strategy.indicators import add_all_core_indicators
 from src.strategy.rules import StrategyConfig
 from src.analysis.session_analysis import classify_hour_to_session
-from src.strategy.signals import generate_signal
+from src.strategy.signals import TradingSignal, generate_signal
 from src.journal.trade_journal import save_signal_to_db
+
+
+SignalGenerator = Callable[[pd.DataFrame, StrategyConfig], TradingSignal]
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,9 @@ def run_backtest(
     backtest_config: BacktestConfig | None = None,
     db_path: str | Path = "data/database/trading.db",
     save_signals: bool = True,
+    signal_generator: SignalGenerator | None = None,
+    save_trades_to_db: bool = True,
+    save_signals_to_db: bool = True,
 ) -> BacktestResult:
     """
     Run a simple backtest on OHLCV data.
@@ -75,6 +82,9 @@ def run_backtest(
 
     if backtest_config is None:
         backtest_config = BacktestConfig()
+
+    if signal_generator is None:
+        signal_generator = generate_signal
 
     _validate_ohlcv(df)
 
@@ -109,7 +119,7 @@ def run_backtest(
 
         window = data.iloc[: i + 1]
 
-        signal = generate_signal(window, strategy_config)
+        signal = signal_generator(window, strategy_config)
         risk_signal = from_trading_signal(signal)
 
         account_state = AccountState(
@@ -132,10 +142,10 @@ def run_backtest(
         decision = evaluate_signal_risk(risk_signal, risk_config, account_state)
 
         if save_signals:
-            if signal.side in {"BUY", "SELL"}:
+            if save_signals_to_db and signal.side in {"BUY", "SELL"}:
                 save_signal_to_db(
                     signal,
-                    db_path=db_path,
+                        db_path=db_path,
                     approved_by_risk_manager=decision.approved,
                     blocked_reason=None if decision.approved else decision.reason,
                 )

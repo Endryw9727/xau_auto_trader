@@ -101,6 +101,20 @@ Output:
 - reports/paper_trading/paper_trades.csv
 - salvataggio trade su SQLite
 
+## Lanciare Strategy Lab
+
+Confronta piu strategie sullo stesso CSV, senza live trading:
+
+    python scripts/run_strategy_lab.py
+
+Strategie iniziali:
+- existing_strategy
+- session_filtered_strategy
+- mtf_momentum_pullback_strategy
+
+Output:
+- reports/strategy_lab/strategy_comparison.csv
+
 ## Aprire dashboard
 
     streamlit run src/dashboard/dashboard.py

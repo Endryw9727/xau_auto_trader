@@ -13,3 +13,4 @@ data/raw/*.csv
 data/processed/*.csv
 reports/backtests/*.csv
 reports/paper_trading/*.csv
+reports/strategy_lab/*.csv
