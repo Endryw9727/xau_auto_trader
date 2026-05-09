@@ -120,8 +120,7 @@ def run_strategy_variant(
     result = run_backtest(
         data,
         backtest_config=config,
-        save_trades_to_db=False,
-        save_signals_to_db=False,
+        save_signals=False,
     )
 
     metrics = result.metrics
