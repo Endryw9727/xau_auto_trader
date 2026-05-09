@@ -8,7 +8,7 @@ exports a CSV comparison. It does not perform live trading.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pandas as pd
@@ -17,7 +17,7 @@ from src.backtesting.backtester import BacktestConfig, BacktestResult, run_backt
 from src.backtesting.metrics import metrics_to_dict
 from src.strategy.rules import StrategyConfig
 from src.strategy.signals import TradingSignal
-from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3
+from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4
 
 
 SignalGenerator = Callable[[pd.DataFrame, StrategyConfig], TradingSignal]
@@ -33,6 +33,9 @@ class StrategySpec:
     version: str
     signal_generator: SignalGenerator
     description: str
+    risk_per_trade: float | None = None
+    min_risk_reward: float | None = None
+    allowed_sessions: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,15 @@ def get_default_strategy_specs() -> list[StrategySpec]:
             signal_generator=strategy_v3.generate_signal,
             description="Simple MTF momentum pullback placeholder.",
         ),
+        StrategySpec(
+            name=strategy_v4.STRATEGY_NAME,
+            version="strategy_v4",
+            signal_generator=strategy_v4.generate_signal,
+            description="Strict Off Session MTF momentum pullback research variant.",
+            risk_per_trade=strategy_v4.REQUIRED_RISK_PER_TRADE,
+            min_risk_reward=strategy_v4.REQUIRED_MIN_RISK_REWARD,
+            allowed_sessions=strategy_v4.REQUIRED_ALLOWED_SESSIONS,
+        ),
     ]
 
 
@@ -94,10 +106,11 @@ def run_strategy_lab(
     comparison_rows: list[dict] = []
 
     for spec in strategies:
+        strategy_backtest_config = _apply_strategy_overrides(backtest_config, spec)
         result = run_backtest(
             df=df,
             strategy_config=strategy_config,
-            backtest_config=backtest_config,
+            backtest_config=strategy_backtest_config,
             save_signals=False,
             signal_generator=spec.signal_generator,
         )
@@ -109,6 +122,9 @@ def run_strategy_lab(
                 "strategy_name": spec.name,
                 "strategy_version": spec.version,
                 "description": spec.description,
+                "risk_per_trade": strategy_backtest_config.risk_per_trade,
+                "min_risk_reward": strategy_backtest_config.min_risk_reward,
+                "allowed_sessions": _format_allowed_sessions(strategy_backtest_config.allowed_sessions),
                 "final_balance": result.final_balance,
                 **metrics,
             }
@@ -122,6 +138,33 @@ def run_strategy_lab(
         results=results,
         report_path=report_path,
     )
+
+
+def _apply_strategy_overrides(config: BacktestConfig, spec: StrategySpec) -> BacktestConfig:
+    """Apply per-strategy research constraints without mutating the base config."""
+    updates = {}
+
+    if spec.risk_per_trade is not None:
+        updates["risk_per_trade"] = spec.risk_per_trade
+
+    if spec.min_risk_reward is not None:
+        updates["min_risk_reward"] = spec.min_risk_reward
+
+    if spec.allowed_sessions is not None:
+        updates["allowed_sessions"] = spec.allowed_sessions
+
+    if not updates:
+        return config
+
+    return replace(config, **updates)
+
+
+def _format_allowed_sessions(allowed_sessions: list[str] | None) -> str:
+    """Format allowed sessions for the comparison CSV."""
+    if allowed_sessions is None:
+        return "All"
+
+    return ", ".join(allowed_sessions)
 
 
 def export_strategy_comparison_report(

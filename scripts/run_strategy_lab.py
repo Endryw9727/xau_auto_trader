@@ -55,7 +55,20 @@ def main() -> None:
     )
 
     print("Strategy comparison:")
-    print(result.comparison[["strategy_name", "total_trades", "net_profit", "win_rate", "max_drawdown"]])
+    print(
+        result.comparison[
+            [
+                "strategy_name",
+                "allowed_sessions",
+                "risk_per_trade",
+                "min_risk_reward",
+                "total_trades",
+                "net_profit",
+                "win_rate",
+                "max_drawdown",
+            ]
+        ]
+    )
     print("")
     print(f"Comparison report exported: {result.report_path}")
     print("Important: Strategy Lab is backtesting only, not live trading.")

@@ -3,21 +3,27 @@ import pandas as pd
 from src.backtesting.backtester import BacktestConfig
 from src.lab.strategy_lab import StrategyVariant, run_strategy_lab as run_legacy_strategy_lab
 from src.strategy.rules import StrategyConfig
-from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3
+from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4
 from src.strategy_lab.lab import COMPARISON_FILENAME, get_default_strategy_specs, run_strategy_lab
 
 
 def make_signal_ready_data(latest_hour: int = 14) -> pd.DataFrame:
-    dates = pd.date_range(f"2026-01-01 {latest_hour - 4:02d}:00:00", periods=5, freq="h")
+    dates = pd.date_range(f"2026-01-01 {latest_hour - 5:02d}:00:00", periods=6, freq="h")
 
     return pd.DataFrame(
         {
-            "Close": [100.0, 101.0, 102.0, 101.0, 103.0],
-            "EMA_20": [99.0, 100.0, 101.0, 102.0, 102.0],
-            "EMA_50": [98.0, 99.0, 100.0, 100.0, 100.0],
-            "RSI_14": [55.0] * 5,
-            "ATR_14": [1.0] * 5,
-            "ADX_14": [25.0] * 5,
+            "Open": [99.8, 100.7, 101.7, 101.6, 101.2, 102.4],
+            "High": [100.4, 101.4, 102.4, 102.1, 101.7, 103.0],
+            "Low": [99.6, 100.5, 101.5, 100.9, 100.8, 101.9],
+            "Close": [100.0, 101.0, 102.0, 101.6, 101.0, 103.0],
+            "EMA_20": [99.0, 99.5, 100.0, 101.0, 102.0, 102.5],
+            "EMA_50": [98.0, 98.5, 99.0, 99.5, 100.0, 100.5],
+            "EMA_200": [95.0, 95.2, 95.4, 95.6, 95.8, 96.0],
+            "RSI_14": [55.0] * 6,
+            "ATR_14": [1.0] * 6,
+            "ADX_14": [25.0] * 6,
+            "PLUS_DI_14": [30.0] * 6,
+            "MINUS_DI_14": [15.0] * 6,
         },
         index=dates,
     )
@@ -82,6 +88,45 @@ def test_strategy_v3_generates_simple_momentum_pullback_buy():
     assert "MTF momentum pullback placeholder" in signal.reason
 
 
+def test_strategy_v4_generates_strict_offsession_signal():
+    signal = strategy_v4.generate_signal(make_signal_ready_data(latest_hour=13), StrategyConfig())
+
+    assert signal.side == "BUY"
+    assert signal.stop_loss is not None
+    assert signal.take_profit is not None
+    assert signal.risk_reward == 2.0
+    assert "Strict Off Session MTF momentum pullback" in signal.reason
+
+
+def test_strategy_v4_blocks_london_and_reduces_signals_vs_base_mtf():
+    windows = [
+        make_signal_ready_data(latest_hour=10),
+        make_signal_ready_data(latest_hour=13),
+        make_signal_ready_data(latest_hour=14),
+    ]
+
+    base_signals = [strategy_v3.generate_signal(window, StrategyConfig()) for window in windows]
+    strict_signals = [strategy_v4.generate_signal(window, StrategyConfig()) for window in windows]
+
+    assert strict_signals[0].side == "NO_TRADE"
+    assert "Session=London" in strict_signals[0].reason
+    assert strict_signals[1].side == "BUY"
+    assert strict_signals[2].side == "NO_TRADE"
+    assert sum(signal.side in {"BUY", "SELL"} for signal in strict_signals) < sum(
+        signal.side in {"BUY", "SELL"} for signal in base_signals
+    )
+
+
+def test_strategy_v4_blocks_unclear_momentum():
+    unclear_data = make_signal_ready_data(latest_hour=13)
+    unclear_data.loc[unclear_data.index[-1], "ADX_14"] = 18.0
+
+    signal = strategy_v4.generate_signal(unclear_data, StrategyConfig())
+
+    assert signal.side == "NO_TRADE"
+    assert "momentum filter blocked" in signal.reason
+
+
 def test_strategy_lab_exports_comparison_csv(tmp_path):
     df = make_strategy_lab_data()
     config = BacktestConfig(warmup_candles=60, allowed_sessions=None)
@@ -97,16 +142,36 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
         "existing_strategy",
         "session_filtered_strategy",
         "mtf_momentum_pullback_strategy",
+        "mtf_strict_offsession_strategy",
     }
     saved = pd.read_csv(tmp_path / COMPARISON_FILENAME)
+    strict_row = saved[saved["strategy_name"] == "mtf_strict_offsession_strategy"].iloc[0]
 
     assert result.report_path == tmp_path / COMPARISON_FILENAME
     assert result.report_path.exists()
     assert set(result.comparison["strategy_name"]) == expected_names
     assert set(saved["strategy_name"]) == expected_names
-    assert len(get_default_strategy_specs()) == 3
+    assert len(get_default_strategy_specs()) == 4
     assert "net_profit" in saved.columns
     assert "max_drawdown" in saved.columns
+    assert strict_row["risk_per_trade"] == 0.0025
+    assert strict_row["min_risk_reward"] == 2.0
+    assert strict_row["allowed_sessions"] == "Off Session"
+
+
+def test_strategy_lab_research_only_without_live_or_api_references():
+    checked_files = [
+        "src/strategy_lab/strategy_v4.py",
+        "src/strategy_lab/lab.py",
+        "scripts/run_strategy_lab.py",
+    ]
+
+    for path in checked_files:
+        source = open(path, encoding="utf-8").read()
+        assert "live_broker" not in source
+        assert "submit_order" not in source
+        assert "api_key" not in source.lower()
+        assert ".env" not in source
 
 
 def test_legacy_strategy_lab_entrypoint_still_runs():
