@@ -15,6 +15,7 @@ from src.strategy_lab import (
     strategy_v6,
     strategy_v50_candidates,
     strategy_v50_pine,
+    v50_growth_refinement_sweep,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "strategy_v6",
     "strategy_v50_candidates",
     "strategy_v50_pine",
+    "v50_growth_refinement_sweep",
 ]

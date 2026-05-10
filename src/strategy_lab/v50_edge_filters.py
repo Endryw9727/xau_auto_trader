@@ -25,6 +25,7 @@ class V50EdgeFilterVariant:
     allowed_sides: tuple[str, ...] | None = None
     allowed_sessions: tuple[str, ...] | None = None
     blocked_sessions: tuple[str, ...] = ()
+    long_allowed_sessions: tuple[str, ...] | None = None
     short_allowed_sessions: tuple[str, ...] | None = None
     blocked_side_sessions: tuple[tuple[str, str], ...] = ()
 
@@ -72,6 +73,9 @@ def _blocked_reason(
 
     if session in variant.blocked_sessions:
         return f"session={session} blocked"
+
+    if variant.long_allowed_sessions is not None and side == "BUY" and session not in variant.long_allowed_sessions:
+        return f"long session={session} not allowed"
 
     if variant.short_allowed_sessions is not None and side == "SELL" and session not in variant.short_allowed_sessions:
         return f"short session={session} not allowed"
