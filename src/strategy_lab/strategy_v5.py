@@ -28,9 +28,10 @@ REQUIRED_FEATURE_COLUMNS = {"trend_regime", "candle_regime", "adx"}
 class FeatureFilterConfig:
     """Configurable research filters for strategy_v5."""
 
-    allowed_trend_regimes: tuple[str, ...] = ("bullish", "bearish")
-    allowed_candle_regimes: tuple[str, ...] = ("normal",)
-    allowed_adx_buckets: tuple[str, ...] = ("moderate",)
+    allowed_trend_regimes: tuple[str, ...] | None = ("bullish", "bearish")
+    allowed_candle_regimes: tuple[str, ...] | None = ("normal",)
+    allowed_adx_buckets: tuple[str, ...] | None = ("moderate",)
+    min_adx: float | None = None
 
 
 DEFAULT_FEATURE_FILTER_CONFIG = FeatureFilterConfig()
@@ -72,7 +73,10 @@ def generate_signal_with_filters(
     adx_bucket = str(latest_features.get("adx_bucket", "unknown"))
     adx = latest_features.get("adx")
 
-    if trend_regime not in feature_filter_config.allowed_trend_regimes:
+    if (
+        feature_filter_config.allowed_trend_regimes is not None
+        and trend_regime not in feature_filter_config.allowed_trend_regimes
+    ):
         reason = (
             "Feature filter blocked neutral trend regime"
             if trend_regime == "neutral"
@@ -83,13 +87,27 @@ def generate_signal_with_filters(
             reason,
         )
 
-    if candle_regime not in feature_filter_config.allowed_candle_regimes:
+    if (
+        feature_filter_config.allowed_candle_regimes is not None
+        and candle_regime not in feature_filter_config.allowed_candle_regimes
+    ):
         return _blocked_signal(
             base_signal,
             f"Feature filter blocked candle regime={candle_regime}",
         )
 
-    if pd.isna(adx) or adx_bucket not in feature_filter_config.allowed_adx_buckets:
+    if feature_filter_config.min_adx is not None and (
+        pd.isna(adx) or float(adx) < feature_filter_config.min_adx
+    ):
+        return _blocked_signal(
+            base_signal,
+            f"Feature filter blocked ADX below {feature_filter_config.min_adx:.1f} | ADX={_format_optional_float(adx)}",
+        )
+
+    if (
+        feature_filter_config.allowed_adx_buckets is not None
+        and (pd.isna(adx) or adx_bucket not in feature_filter_config.allowed_adx_buckets)
+    ):
         return _blocked_signal(
             base_signal,
             f"Feature filter blocked ADX bucket={adx_bucket} | ADX={_format_optional_float(adx)}",

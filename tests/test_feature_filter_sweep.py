@@ -9,6 +9,7 @@ from src.strategy_lab.feature_filter_sweep import (
     SWEEP_COLUMNS,
     build_focused_feature_filter_variants,
     build_feature_filter_variants,
+    build_relaxed_feature_filter_variants,
     filter_fallback_sweep_results,
     filter_primary_sweep_results,
     run_feature_filter_sweep,
@@ -68,8 +69,28 @@ def test_focused_feature_filter_sweep_builds_fewer_unique_variants():
     assert all(variant.adx_filter != "moderate only" for variant in focused_variants)
 
 
+def test_relaxed_feature_filter_sweep_builds_unique_reduced_variants():
+    relaxed_variants = build_relaxed_feature_filter_variants()
+    relaxed_names = [variant.variant_name for variant in relaxed_variants]
+
+    assert relaxed_variants
+    assert len(relaxed_variants) < 500
+    assert len(relaxed_names) == len(set(relaxed_names))
+    assert {variant.adx_filter for variant in relaxed_variants} >= {
+        "any",
+        "above_18",
+        "above_20",
+        "moderate + strong + very_strong",
+    }
+    assert {variant.trend_filter for variant in relaxed_variants} >= {
+        "bullish + bearish",
+        "all",
+        "no neutral",
+    }
+
+
 def test_feature_filter_sweep_output_contains_required_columns(tmp_path):
-    variants = build_feature_filter_variants()[:2]
+    variants = build_relaxed_feature_filter_variants()[:2]
     output_path = tmp_path / "feature_filter_sweep.csv"
 
     comparison = run_feature_filter_sweep(
@@ -89,10 +110,12 @@ def test_feature_filter_sweep_output_contains_required_columns(tmp_path):
 def test_feature_filter_sweep_cli_options():
     full_args = parse_args(["--full"])
     focused_args = parse_args(["--focused"])
+    relaxed_args = parse_args(["--relaxed"])
     candle_args = parse_args(["--candles", "20000"])
 
     assert full_args.full is True
     assert focused_args.focused is True
+    assert relaxed_args.relaxed is True
     assert candle_args.candles == 20000
 
 

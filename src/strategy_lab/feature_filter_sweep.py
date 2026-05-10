@@ -25,6 +25,7 @@ DEFAULT_SWEEP_REPORT_PATH = Path("reports/strategy_lab/feature_filter_sweep.csv"
 RISK_PER_TRADE_VALUES = (0.0025, 0.005)
 MIN_RISK_REWARD_VALUES = (1.8, 2.0, 2.2, 2.5)
 FOCUSED_MIN_RISK_REWARD_VALUES = (1.8, 2.0, 2.2)
+RELAXED_MIN_RISK_REWARD_VALUES = (1.5, 1.8, 2.0)
 
 SWEEP_COLUMNS = [
     "variant_name",
@@ -52,6 +53,8 @@ class OptionSet:
     label: str
     slug: str
     values: tuple[str, ...] | None
+    min_value: float | None = None
+    strategy_min_adx: float | None = None
 
 
 @dataclass(frozen=True)
@@ -64,11 +67,13 @@ class FeatureFilterSweepVariant:
     allowed_sessions_label: str
     allowed_sessions: tuple[str, ...] | None
     candle_filter: str
-    candle_regimes: tuple[str, ...]
+    candle_regimes: tuple[str, ...] | None
     adx_filter: str
-    adx_buckets: tuple[str, ...]
+    adx_buckets: tuple[str, ...] | None
+    min_adx: float | None
+    strategy_min_adx: float | None
     trend_filter: str
-    trend_regimes: tuple[str, ...]
+    trend_regimes: tuple[str, ...] | None
 
 
 SESSION_OPTIONS = (
@@ -117,6 +122,29 @@ FOCUSED_TREND_FILTER_OPTIONS = (
     TREND_FILTER_OPTIONS[0],
 )
 
+RELAXED_SESSION_OPTIONS = (
+    SESSION_OPTIONS[0],
+    SESSION_OPTIONS[5],
+    SESSION_OPTIONS[6],
+    SESSION_OPTIONS[4],
+)
+RELAXED_CANDLE_FILTER_OPTIONS = (
+    OptionSet("all", "candle_all", None),
+    OptionSet("normal + indecision", "candle_normal_indecision", ("normal", "indecision")),
+    OptionSet("no impulse", "candle_no_impulse", ("normal", "indecision", "unknown")),
+)
+RELAXED_ADX_FILTER_OPTIONS = (
+    OptionSet("any", "adx_any", None, strategy_min_adx=0.0),
+    OptionSet("above_18", "adx_above18", None, min_value=18.0, strategy_min_adx=18.0),
+    OptionSet("above_20", "adx_above20", None, min_value=20.0, strategy_min_adx=20.0),
+    ADX_FILTER_OPTIONS[2],
+)
+RELAXED_TREND_FILTER_OPTIONS = (
+    OptionSet("bullish + bearish", "trend_bull_bear", ("bullish", "bearish")),
+    OptionSet("all", "trend_all", None),
+    OptionSet("no neutral", "trend_no_neutral", ("bullish", "bearish", "unknown")),
+)
+
 
 def build_feature_filter_variants() -> list[FeatureFilterSweepVariant]:
     """Build the full deterministic feature-filter sweep grid."""
@@ -140,6 +168,32 @@ def build_focused_feature_filter_variants() -> list[FeatureFilterSweepVariant]:
         adx_filter_options=FOCUSED_ADX_FILTER_OPTIONS,
         trend_filter_options=FOCUSED_TREND_FILTER_OPTIONS,
     )
+
+
+def build_relaxed_feature_filter_variants() -> list[FeatureFilterSweepVariant]:
+    """Build a reduced, more permissive feature-filter grid."""
+    primary_variants = _build_variants(
+        risk_per_trade_values=RISK_PER_TRADE_VALUES,
+        min_risk_reward_values=RELAXED_MIN_RISK_REWARD_VALUES,
+        session_options=RELAXED_SESSION_OPTIONS,
+        candle_filter_options=RELAXED_CANDLE_FILTER_OPTIONS,
+        adx_filter_options=RELAXED_ADX_FILTER_OPTIONS,
+        trend_filter_options=(RELAXED_TREND_FILTER_OPTIONS[0],),
+    )
+    trend_probe_variants = _build_variants(
+        risk_per_trade_values=RISK_PER_TRADE_VALUES,
+        min_risk_reward_values=RELAXED_MIN_RISK_REWARD_VALUES,
+        session_options=RELAXED_SESSION_OPTIONS,
+        candle_filter_options=(RELAXED_CANDLE_FILTER_OPTIONS[0],),
+        adx_filter_options=(RELAXED_ADX_FILTER_OPTIONS[0], RELAXED_ADX_FILTER_OPTIONS[1]),
+        trend_filter_options=(RELAXED_TREND_FILTER_OPTIONS[1], RELAXED_TREND_FILTER_OPTIONS[2]),
+    )
+
+    variants_by_name = {
+        variant.variant_name: variant
+        for variant in [*primary_variants, *trend_probe_variants]
+    }
+    return list(variants_by_name.values())
 
 
 def _build_variants(
@@ -187,11 +241,13 @@ def _build_variants(
                 allowed_sessions_label=session_option.label,
                 allowed_sessions=session_option.values,
                 candle_filter=candle_option.label,
-                candle_regimes=candle_option.values or (),
+                candle_regimes=candle_option.values,
                 adx_filter=adx_option.label,
-                adx_buckets=adx_option.values or (),
+                adx_buckets=adx_option.values,
+                min_adx=adx_option.min_value,
+                strategy_min_adx=adx_option.strategy_min_adx,
                 trend_filter=trend_option.label,
-                trend_regimes=trend_option.values or (),
+                trend_regimes=trend_option.values,
             )
         )
 
@@ -264,12 +320,19 @@ def run_feature_filter_variant(
         allowed_trend_regimes=variant.trend_regimes,
         allowed_candle_regimes=variant.candle_regimes,
         allowed_adx_buckets=variant.adx_buckets,
+        min_adx=variant.min_adx,
     )
     signal_generator = make_signal_generator(feature_filter_config)
+    variant_strategy_config = strategy_config
+    if variant.strategy_min_adx is not None:
+        variant_strategy_config = replace(
+            strategy_config,
+            min_adx=variant.strategy_min_adx,
+        )
 
     return run_backtest(
         df=df,
-        strategy_config=replace(strategy_config, min_risk_reward=variant.min_risk_reward),
+        strategy_config=replace(variant_strategy_config, min_risk_reward=variant.min_risk_reward),
         backtest_config=variant_backtest_config,
         save_signals=False,
         signal_generator=signal_generator,

@@ -4,6 +4,8 @@ Run an advanced sweep for mtf_feature_filtered_strategy.
 Usage:
     python scripts/run_feature_filter_sweep.py
     python scripts/run_feature_filter_sweep.py --focused
+    python scripts/run_feature_filter_sweep.py --relaxed --candles 20000
+    python scripts/run_feature_filter_sweep.py --relaxed --full
     python scripts/run_feature_filter_sweep.py --candles 20000
     python scripts/run_feature_filter_sweep.py --full
 
@@ -30,6 +32,7 @@ from src.strategy_lab.feature_filter_sweep import (
     SWEEP_COLUMNS,
     build_focused_feature_filter_variants,
     build_feature_filter_variants,
+    build_relaxed_feature_filter_variants,
     filter_fallback_sweep_results,
     filter_primary_sweep_results,
     run_feature_filter_sweep,
@@ -54,6 +57,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run the reduced higher-signal sweep grid.",
     )
     parser.add_argument(
+        "--relaxed",
+        action="store_true",
+        help="Run the reduced more permissive sweep grid.",
+    )
+    parser.add_argument(
         "--candles",
         type=int,
         default=None,
@@ -63,6 +71,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     if args.candles is not None and args.candles <= 0:
         parser.error("--candles must be a positive integer")
+
+    if args.focused and args.relaxed:
+        parser.error("--focused and --relaxed cannot be used together")
 
     return args
 
@@ -104,8 +115,7 @@ def main() -> None:
     print("Building feature columns once...")
     feature_df = build_features(sweep_df)
 
-    variants = build_focused_feature_filter_variants() if args.focused else build_feature_filter_variants()
-    sweep_mode = "focused" if args.focused else "full grid"
+    variants, sweep_mode = select_sweep_variants(args)
     print(f"Sweep mode: {sweep_mode}")
     print(f"Variants: {len(variants)}")
     print("")
@@ -129,30 +139,87 @@ def main() -> None:
     print("Important: this is backtesting research only, not live trading.")
 
 
-def print_top_results(comparison) -> None:
-    """Print quality-focused top result tables."""
-    primary = filter_primary_sweep_results(comparison)
+def select_sweep_variants(args):
+    """Select sweep variants from command line options."""
+    if args.relaxed:
+        return build_relaxed_feature_filter_variants(), "relaxed"
+    if args.focused:
+        return build_focused_feature_filter_variants(), "focused"
+    return build_feature_filter_variants(), "full grid"
 
-    if not primary.empty:
-        print("Top 20 variants with total_trades >= 100, net_profit > 0, max_drawdown > 0:")
-        print(sort_sweep_results(primary).head(20)[SWEEP_COLUMNS].to_string(index=False))
+
+def print_top_results(comparison) -> None:
+    """Print top result tables while avoiding tiny-sample winners."""
+    high_trade = comparison[comparison["total_trades"] >= 250]
+    eligible = comparison[comparison["total_trades"] >= 100]
+
+    _print_table(
+        "Top 20 variants with total_trades >= 250:",
+        sort_sweep_results(high_trade).head(20),
+    )
+
+    primary = filter_primary_sweep_results(comparison)
+    _print_table(
+        "Top 20 variants with total_trades >= 100, net_profit > 0, max_drawdown > 0:",
+        sort_sweep_results(primary).head(20),
+    )
+
+    if not eligible.empty:
+        _print_table(
+            "Top 20 variants by profit_factor with total_trades >= 100:",
+            sort_sweep_results(eligible).head(20),
+        )
+        _print_table(
+            "Top 20 variants by net_profit with total_trades >= 100:",
+            eligible.sort_values(
+                by=["net_profit", "profit_factor", "max_drawdown"],
+                ascending=[False, False, True],
+            ).head(20),
+        )
+        _print_table(
+            "Top 20 low-drawdown variants with total_trades >= 100 and net_profit > 0:",
+            eligible[
+                (eligible["net_profit"] > 0)
+                & (eligible["max_drawdown"] > 0)
+            ].sort_values(
+                by=["max_drawdown", "net_profit", "profit_factor"],
+                ascending=[True, False, False],
+            ).head(20),
+        )
+        _print_table(
+            "Top 20 variants by total_trades with total_trades >= 100:",
+            eligible.sort_values(
+                by=["total_trades", "profit_factor", "net_profit"],
+                ascending=[False, False, False],
+            ).head(20),
+        )
         return
 
-    print("No variants found with total_trades >= 100, net_profit > 0, max_drawdown > 0.")
+    print("No variants found with total_trades >= 100. Lower-trade tables are diagnostic only.")
 
     fallback = filter_fallback_sweep_results(comparison)
     if not fallback.empty:
-        print("")
-        print("Top 20 variants with total_trades >= 50:")
-        print(sort_sweep_results(fallback).head(20)[SWEEP_COLUMNS].to_string(index=False))
+        _print_table(
+            "Diagnostic top 20 variants with total_trades >= 50:",
+            sort_sweep_results(fallback).head(20),
+        )
 
+    _print_table(
+        "Diagnostic top 20 variants by total_trades:",
+        comparison.sort_values(
+            by=["total_trades", "profit_factor", "net_profit"],
+            ascending=[False, False, False],
+        ).head(20),
+    )
+
+
+def _print_table(title: str, table) -> None:
     print("")
-    print("Top 20 variants by total_trades:")
-    top_by_trades = comparison.sort_values(
-        by=["total_trades", "profit_factor", "net_profit"],
-        ascending=[False, False, False],
-    ).head(20)
-    print(top_by_trades[SWEEP_COLUMNS].to_string(index=False))
+    print(title)
+    if table.empty:
+        print("No matching variants.")
+        return
+    print(table[SWEEP_COLUMNS].to_string(index=False))
 
 
 if __name__ == "__main__":
