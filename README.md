@@ -121,6 +121,20 @@ Strategie iniziali:
 Output:
 - reports/strategy_lab/strategy_comparison.csv
 
+## Lanciare Feature Filter Sweep
+
+Confronta varianti controllate della mtf_feature_filtered_strategy:
+
+    python scripts/run_feature_filter_sweep.py
+    python scripts/run_feature_filter_sweep.py --focused
+    python scripts/run_feature_filter_sweep.py --candles 20000
+    python scripts/run_feature_filter_sweep.py --full
+
+Usa `--focused` per una griglia ridotta e piu veloce.
+
+Output:
+- reports/strategy_lab/feature_filter_sweep.csv
+
 ## Aprire dashboard
 
     streamlit run src/dashboard/dashboard.py

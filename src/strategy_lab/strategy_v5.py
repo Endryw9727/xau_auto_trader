@@ -8,6 +8,8 @@ It does not optimize parameters and does not execute trades.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pandas as pd
 
 from src.strategy.rules import StrategyConfig
@@ -22,14 +24,35 @@ REQUIRED_HISTORY_CANDLES = 500
 REQUIRED_FEATURE_COLUMNS = {"trend_regime", "candle_regime", "adx"}
 
 
+@dataclass(frozen=True)
+class FeatureFilterConfig:
+    """Configurable research filters for strategy_v5."""
+
+    allowed_trend_regimes: tuple[str, ...] = ("bullish", "bearish")
+    allowed_candle_regimes: tuple[str, ...] = ("normal",)
+    allowed_adx_buckets: tuple[str, ...] = ("moderate",)
+
+
+DEFAULT_FEATURE_FILTER_CONFIG = FeatureFilterConfig()
+
+
 def generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> TradingSignal:
+    """Generate the default feature-filtered MTF momentum pullback signal."""
+    return generate_signal_with_filters(df, config, DEFAULT_FEATURE_FILTER_CONFIG)
+
+
+def generate_signal_with_filters(
+    df: pd.DataFrame,
+    config: StrategyConfig | None = None,
+    feature_filter_config: FeatureFilterConfig = DEFAULT_FEATURE_FILTER_CONFIG,
+) -> TradingSignal:
     """
     Generate an MTF momentum pullback signal filtered by entry-time features.
 
     Filters:
-    - block neutral trend regime
-    - accept only normal candle regime
-    - accept only moderate ADX equivalent: 18 < ADX <= 25
+    - allowed trend regimes
+    - allowed candle regimes
+    - allowed ADX buckets
     """
     if config is None:
         config = StrategyConfig()
@@ -46,24 +69,30 @@ def generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> T
 
     trend_regime = str(latest_features.get("trend_regime", "neutral"))
     candle_regime = str(latest_features.get("candle_regime", "normal"))
+    adx_bucket = str(latest_features.get("adx_bucket", "unknown"))
     adx = latest_features.get("adx")
 
-    if trend_regime == "neutral":
+    if trend_regime not in feature_filter_config.allowed_trend_regimes:
+        reason = (
+            "Feature filter blocked neutral trend regime"
+            if trend_regime == "neutral"
+            else f"Feature filter blocked trend regime={trend_regime}"
+        )
         return _blocked_signal(
             base_signal,
-            "Feature filter blocked neutral trend regime",
+            reason,
         )
 
-    if candle_regime != "normal":
+    if candle_regime not in feature_filter_config.allowed_candle_regimes:
         return _blocked_signal(
             base_signal,
             f"Feature filter blocked candle regime={candle_regime}",
         )
 
-    if pd.isna(adx) or not (ADX_MODERATE_MIN < float(adx) <= ADX_MODERATE_MAX):
+    if pd.isna(adx) or adx_bucket not in feature_filter_config.allowed_adx_buckets:
         return _blocked_signal(
             base_signal,
-            f"Feature filter blocked ADX outside moderate bucket | ADX={_format_optional_float(adx)}",
+            f"Feature filter blocked ADX bucket={adx_bucket} | ADX={_format_optional_float(adx)}",
         )
 
     return TradingSignal(
@@ -81,9 +110,20 @@ def generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> T
             " | Feature filtered"
             f" | trend_regime={trend_regime}"
             f" | candle_regime={candle_regime}"
+            f" | adx_bucket={adx_bucket}"
             f" | ADX={float(adx):.2f}"
         ),
     )
+
+
+def make_signal_generator(feature_filter_config: FeatureFilterConfig):
+    """Build a signal generator function for a specific feature filter set."""
+
+    def _generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> TradingSignal:
+        return generate_signal_with_filters(df, config, feature_filter_config)
+
+    _generate_signal.required_history_candles = REQUIRED_HISTORY_CANDLES
+    return _generate_signal
 
 
 def _get_latest_features(df):
@@ -102,7 +142,7 @@ def _get_latest_features(df):
             "rsi": None,
             "atr": None,
             "body_to_range_ratio": 0.0,
-    }
+        }
 
     latest = df.iloc[-1]
 
@@ -218,9 +258,9 @@ def _classify_adx_bucket(adx) -> str:
         return "unknown"
 
     adx_value = float(adx)
-    if adx_value < 18:
+    if adx_value <= ADX_MODERATE_MIN:
         return "weak"
-    if adx_value < 25:
+    if adx_value <= ADX_MODERATE_MAX:
         return "moderate"
     if adx_value < 35:
         return "strong"
@@ -236,3 +276,4 @@ def _optional_float(value) -> float | None:
 
 
 generate_signal.required_history_candles = REQUIRED_HISTORY_CANDLES
+generate_signal_with_filters.required_history_candles = REQUIRED_HISTORY_CANDLES
