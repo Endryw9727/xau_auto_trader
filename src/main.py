@@ -133,6 +133,7 @@ def build_backtest_config(settings) -> BacktestConfig:
         commission_per_trade=settings.backtest.commission_per_trade,
         slippage_points=settings.backtest.slippage_points,
         warmup_candles=settings.backtest.warmup_candles,
+        rolling_window_candles=settings.backtest.rolling_window_candles,
         allowed_sessions=settings.sessions.enabled_sessions,
     )
 

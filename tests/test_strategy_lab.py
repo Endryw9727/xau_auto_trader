@@ -1,5 +1,6 @@
 import pandas as pd
 
+from scripts.run_strategy_lab import QUICK_CANDLES, parse_args, select_strategy_lab_data
 from src.backtesting.backtester import BacktestConfig
 from src.lab.strategy_lab import StrategyVariant, run_strategy_lab as run_legacy_strategy_lab
 from src.strategy.rules import StrategyConfig
@@ -195,6 +196,45 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
     assert strict_row["risk_per_trade"] == 0.0025
     assert strict_row["min_risk_reward"] == 2.0
     assert strict_row["allowed_sessions"] == "Off Session"
+
+
+def test_strategy_lab_progress_mode_runs(tmp_path, capsys):
+    df = make_strategy_lab_data()
+    config = BacktestConfig(warmup_candles=60, allowed_sessions=None)
+
+    result = run_strategy_lab(
+        df=df,
+        strategy_config=StrategyConfig(),
+        backtest_config=config,
+        output_dir=tmp_path,
+        show_progress=True,
+    )
+    captured = capsys.readouterr().out
+
+    assert "Running strategy:" in captured
+    assert "Strategy Lab total time:" in captured
+    assert "mtf_feature_filtered_strategy" in set(result.comparison["strategy_name"])
+
+
+def test_run_strategy_lab_quick_selection_uses_latest_default_window():
+    df = make_strategy_lab_data(rows=QUICK_CANDLES + 25)
+
+    selected = select_strategy_lab_data(df)
+
+    assert len(selected) == QUICK_CANDLES
+    assert selected.index[0] == df.index[-QUICK_CANDLES]
+
+
+def test_run_strategy_lab_cli_options():
+    full_args = parse_args(["--full"])
+    candle_args = parse_args(["--candles", "20000"])
+
+    assert full_args.full is True
+    assert candle_args.candles == 20000
+
+
+def test_strategy_v5_declares_required_history():
+    assert strategy_v5.generate_signal.required_history_candles == strategy_v5.REQUIRED_HISTORY_CANDLES
 
 
 def test_strategy_lab_research_only_without_live_or_api_references():

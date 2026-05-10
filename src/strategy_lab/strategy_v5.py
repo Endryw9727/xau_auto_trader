@@ -18,6 +18,7 @@ from src.strategy_lab.strategy_v3 import generate_signal as generate_base_signal
 STRATEGY_NAME = "mtf_feature_filtered_strategy"
 ADX_MODERATE_MIN = 18.0
 ADX_MODERATE_MAX = 25.0
+REQUIRED_HISTORY_CANDLES = 500
 REQUIRED_FEATURE_COLUMNS = {"trend_regime", "candle_regime", "adx"}
 
 
@@ -90,7 +91,7 @@ def _get_latest_features(df):
     Fast latest-feature extraction for strategy_v5.
 
     This function is called thousands of times during backtests.
-    Do not call build_features(df) here.
+    Keep fallback calculations local and lightweight.
     """
     if df is None or df.empty:
         return {
@@ -101,9 +102,27 @@ def _get_latest_features(df):
             "rsi": None,
             "atr": None,
             "body_to_range_ratio": 0.0,
-        }
+    }
 
     latest = df.iloc[-1]
+
+    if REQUIRED_FEATURE_COLUMNS.issubset(df.columns):
+        trend_regime = latest.get("trend_regime", "neutral")
+        candle_regime = latest.get("candle_regime", "normal")
+        adx = latest.get("adx", None)
+        adx_bucket = latest.get("adx_bucket", None)
+        if adx_bucket is None or pd.isna(adx_bucket):
+            adx_bucket = _classify_adx_bucket(adx)
+
+        return {
+            "trend_regime": "neutral" if pd.isna(trend_regime) else str(trend_regime),
+            "candle_regime": "normal" if pd.isna(candle_regime) else str(candle_regime),
+            "adx_bucket": str(adx_bucket),
+            "adx": float(adx) if adx is not None and not pd.isna(adx) else None,
+            "rsi": _optional_float(latest.get("rsi", None)),
+            "atr": _optional_float(latest.get("atr", None)),
+            "body_to_range_ratio": _optional_float(latest.get("body_to_range_ratio", 0.0)),
+        }
 
     precomputed_trend_regime = latest.get("trend_regime", None)
     precomputed_candle_regime = latest.get("candle_regime", None)
@@ -156,15 +175,7 @@ def _get_latest_features(df):
 
     adx_bucket = precomputed_adx_bucket if precomputed_adx_bucket is not None else "unknown"
     if precomputed_adx_bucket is None and adx is not None:
-        adx_value = float(adx)
-        if adx_value < 18:
-            adx_bucket = "weak"
-        elif adx_value < 25:
-            adx_bucket = "moderate"
-        elif adx_value < 35:
-            adx_bucket = "strong"
-        else:
-            adx_bucket = "very_strong"
+        adx_bucket = _classify_adx_bucket(adx)
 
     return {
         "trend_regime": trend_regime,
@@ -199,3 +210,29 @@ def _format_optional_float(value) -> str:
         return "nan"
 
     return f"{float(value):.2f}"
+
+
+def _classify_adx_bucket(adx) -> str:
+    """Classify ADX into the buckets used by outcome analysis."""
+    if adx is None or pd.isna(adx):
+        return "unknown"
+
+    adx_value = float(adx)
+    if adx_value < 18:
+        return "weak"
+    if adx_value < 25:
+        return "moderate"
+    if adx_value < 35:
+        return "strong"
+    return "very_strong"
+
+
+def _optional_float(value) -> float | None:
+    """Convert optional numeric values while preserving missing values."""
+    if value is None or pd.isna(value):
+        return None
+
+    return float(value)
+
+
+generate_signal.required_history_candles = REQUIRED_HISTORY_CANDLES

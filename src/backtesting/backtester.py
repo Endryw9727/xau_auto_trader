@@ -48,6 +48,7 @@ class BacktestConfig:
     slippage_points: float = 0.0
     warmup_candles: int = 220
     allowed_sessions: list[str] | None = None
+    rolling_window_candles: int | None = 500
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,26 @@ class BacktestResult:
     trades: pd.DataFrame
     metrics: BacktestMetrics
     final_balance: float
+
+
+def _resolve_rolling_window_candles(
+    config: BacktestConfig,
+    signal_generator: SignalGenerator,
+) -> int | None:
+    configured_window = config.rolling_window_candles
+    if configured_window is not None and configured_window <= 0:
+        raise ValueError("rolling_window_candles must be positive or None")
+
+    required_window = getattr(signal_generator, "required_history_candles", None)
+    if required_window is None:
+        return configured_window
+
+    required_window = int(required_window)
+    if required_window <= 0:
+        raise ValueError("strategy required_history_candles must be positive")
+    if configured_window is None:
+        return None
+    return max(configured_window, required_window)
 
 
 def run_backtest(
@@ -92,6 +113,10 @@ def run_backtest(
         raise ValueError("Not enough candles for backtest warmup")
 
     data = add_all_core_indicators(df)
+    rolling_window_candles = _resolve_rolling_window_candles(
+        backtest_config,
+        signal_generator,
+    )
     balance = backtest_config.initial_balance
     trades: list[dict] = []
     consecutive_losses = 0
@@ -117,7 +142,10 @@ def run_backtest(
             i += 1
             continue
 
-        window = data.iloc[max(0, i - 500): i + 1]
+        window_start = 0
+        if rolling_window_candles is not None:
+            window_start = max(0, i - rolling_window_candles)
+        window = data.iloc[window_start: i + 1]
 
         signal = signal_generator(window, strategy_config)
         risk_signal = from_trading_signal(signal)
@@ -145,7 +173,7 @@ def run_backtest(
             if save_signals_to_db and signal.side in {"BUY", "SELL"}:
                 save_signal_to_db(
                     signal,
-                        db_path=db_path,
+                    db_path=db_path,
                     approved_by_risk_manager=decision.approved,
                     blocked_reason=None if decision.approved else decision.reason,
                 )

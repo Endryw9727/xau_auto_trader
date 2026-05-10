@@ -52,6 +52,7 @@ def test_main_builds_configs_from_settings():
             commission_per_trade=0.5,
             slippage_points=0.2,
             warmup_candles=180,
+            rolling_window_candles=300,
         ),
     )
 
@@ -65,3 +66,4 @@ def test_main_builds_configs_from_settings():
     assert backtest_config.max_risk_per_trade == 0.008
     assert backtest_config.max_open_trades == 3
     assert backtest_config.warmup_candles == 180
+    assert backtest_config.rolling_window_candles == 300

@@ -106,6 +106,10 @@ Output:
 Confronta piu strategie sullo stesso CSV, senza live trading:
 
     python scripts/run_strategy_lab.py
+    python scripts/run_strategy_lab.py --candles 20000
+    python scripts/run_strategy_lab.py --full
+
+La modalita predefinita usa le ultime 5000 candele per iterare piu velocemente.
 
 Strategie iniziali:
 - existing_strategy
@@ -177,6 +181,7 @@ Parametri principali:
       commission_per_trade: 0.0
       slippage_points: 0.0
       warmup_candles: 220
+      rolling_window_candles: 500
 
 ## File .env
 

@@ -23,6 +23,7 @@ from src.strategy.signals import TradingSignal
 
 
 STRATEGY_NAME = "mtf_momentum_pullback_strategy"
+REQUIRED_HISTORY_CANDLES = 500
 MOMENTUM_LOOKBACK = 3
 
 
@@ -177,3 +178,6 @@ def _get_timestamp(df: pd.DataFrame) -> datetime:
         return latest_index.to_pydatetime()
 
     return datetime.now(UTC)
+
+
+generate_signal.required_history_candles = REQUIRED_HISTORY_CANDLES

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+import time
 
 import pandas as pd
 
@@ -92,6 +93,7 @@ def run_strategy_lab(
     backtest_config: BacktestConfig | None = None,
     strategies: list[StrategySpec] | None = None,
     output_dir: str | Path = DEFAULT_REPORT_DIR,
+    show_progress: bool = False,
 ) -> StrategyLabResult:
     """
     Run all Strategy Lab strategies and export a comparison CSV.
@@ -110,8 +112,13 @@ def run_strategy_lab(
 
     results: dict[str, BacktestResult] = {}
     comparison_rows: list[dict] = []
+    started_at = time.perf_counter()
 
     for spec in strategies:
+        strategy_started_at = time.perf_counter()
+        if show_progress:
+            print(f"Running strategy: {spec.name}")
+
         strategy_backtest_config = _apply_strategy_overrides(backtest_config, spec)
         result = run_backtest(
             df=df,
@@ -136,8 +143,16 @@ def run_strategy_lab(
             }
         )
 
+        if show_progress:
+            elapsed = time.perf_counter() - strategy_started_at
+            print(f"Completed strategy: {spec.name} in {elapsed:.2f}s")
+
     comparison = pd.DataFrame(comparison_rows)
     report_path = export_strategy_comparison_report(comparison, output_dir)
+
+    if show_progress:
+        elapsed = time.perf_counter() - started_at
+        print(f"Strategy Lab total time: {elapsed:.2f}s")
 
     return StrategyLabResult(
         comparison=comparison,

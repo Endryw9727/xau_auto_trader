@@ -42,6 +42,7 @@ backtest:
   commission_per_trade: 0
   slippage_points: 0
   warmup_candles: 220
+  rolling_window_candles: 500
 """
 
 
@@ -77,6 +78,7 @@ def test_load_settings_from_config(tmp_path):
     assert settings.sessions.enabled_sessions == ["Asia", "New York", "Off Session"]
     assert settings.backtest.initial_balance == 1000
     assert settings.backtest.warmup_candles == 220
+    assert settings.backtest.rolling_window_candles == 500
 
 
 def test_env_overrides_config(tmp_path):

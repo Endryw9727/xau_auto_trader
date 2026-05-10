@@ -69,6 +69,7 @@ class BacktestSettings:
     commission_per_trade: float
     slippage_points: float
     warmup_candles: int
+    rolling_window_candles: int | None
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,9 @@ def load_settings(config_path: str | Path = CONFIG_PATH, env_path: str | Path = 
         "MAX_DAILY_LOSS",
         risk_config.get("max_daily_loss", 0.02),
     )
+    rolling_window_candles = backtest_config.get("rolling_window_candles", 500)
+    if rolling_window_candles is not None:
+        rolling_window_candles = int(rolling_window_candles)
 
     return AppSettings(
         trading=TradingSettings(
@@ -176,6 +180,7 @@ def load_settings(config_path: str | Path = CONFIG_PATH, env_path: str | Path = 
             commission_per_trade=float(backtest_config.get("commission_per_trade", 0.0)),
             slippage_points=float(backtest_config.get("slippage_points", 0.0)),
             warmup_candles=int(backtest_config.get("warmup_candles", 220)),
+            rolling_window_candles=rolling_window_candles,
         ),
     )
 

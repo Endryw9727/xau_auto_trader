@@ -45,3 +45,4 @@ backtest:
   commission_per_trade: 0.0
   slippage_points: 0.0
   warmup_candles: 220
+  rolling_window_candles: 500

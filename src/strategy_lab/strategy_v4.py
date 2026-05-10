@@ -22,6 +22,7 @@ STRATEGY_NAME = "mtf_strict_offsession_strategy"
 REQUIRED_RISK_PER_TRADE = 0.0025
 REQUIRED_MIN_RISK_REWARD = 2.0
 REQUIRED_ALLOWED_SESSIONS = ["Off Session"]
+REQUIRED_HISTORY_CANDLES = 500
 
 MOMENTUM_LOOKBACK = 5
 MIN_ADX = 22.0
@@ -253,3 +254,6 @@ def _get_timestamp(df: pd.DataFrame) -> datetime:
         return latest_index.to_pydatetime()
 
     return datetime.now(UTC)
+
+
+generate_signal.required_history_candles = REQUIRED_HISTORY_CANDLES

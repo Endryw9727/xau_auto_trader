@@ -4,6 +4,7 @@ import pytest
 from src.backtesting.backtester import BacktestConfig, export_backtest_report, run_backtest
 from src.backtesting.metrics import calculate_max_consecutive, calculate_max_drawdown, calculate_metrics
 from src.database.db import get_all_signals
+from src.strategy.signals import TradingSignal
 
 
 def make_backtest_data(rows: int = 300) -> pd.DataFrame:
@@ -146,3 +147,76 @@ def test_backtest_does_not_save_no_trade_signals_to_db(tmp_path, monkeypatch):
     run_backtest(df, backtest_config=config)
 
     assert "NO_TRADE" not in saved_signals
+
+
+def test_backtest_uses_configured_rolling_window():
+    observed_window_lengths = []
+
+    def spy_signal_generator(window, config):
+        observed_window_lengths.append(len(window))
+        return TradingSignal(
+            timestamp=window.index[-1].to_pydatetime(),
+            symbol=config.symbol,
+            timeframe=config.timeframe,
+            side="NO_TRADE",
+            entry_price=None,
+            stop_loss=None,
+            take_profit=None,
+            risk_reward=None,
+            confidence=0.0,
+            reason="test no trade",
+        )
+
+    df = make_backtest_data(rows=90)
+    config = BacktestConfig(
+        warmup_candles=30,
+        rolling_window_candles=20,
+    )
+
+    run_backtest(
+        df,
+        backtest_config=config,
+        signal_generator=spy_signal_generator,
+        save_signals=False,
+    )
+
+    assert observed_window_lengths
+    assert max(observed_window_lengths) <= 21
+
+
+def test_backtest_allows_strategy_to_request_more_history():
+    observed_window_lengths = []
+
+    def spy_signal_generator(window, config):
+        observed_window_lengths.append(len(window))
+        return TradingSignal(
+            timestamp=window.index[-1].to_pydatetime(),
+            symbol=config.symbol,
+            timeframe=config.timeframe,
+            side="NO_TRADE",
+            entry_price=None,
+            stop_loss=None,
+            take_profit=None,
+            risk_reward=None,
+            confidence=0.0,
+            reason="test no trade",
+        )
+
+    spy_signal_generator.required_history_candles = 40
+
+    df = make_backtest_data(rows=100)
+    config = BacktestConfig(
+        warmup_candles=30,
+        rolling_window_candles=20,
+    )
+
+    run_backtest(
+        df,
+        backtest_config=config,
+        signal_generator=spy_signal_generator,
+        save_signals=False,
+    )
+
+    assert observed_window_lengths
+    assert max(observed_window_lengths) <= 41
+    assert max(observed_window_lengths) > 21
