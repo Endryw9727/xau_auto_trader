@@ -5,6 +5,7 @@ Usage:
     python scripts/run_walk_forward_analysis.py --period yearly
     python scripts/run_walk_forward_analysis.py --period half
     python scripts/run_walk_forward_analysis.py --period quarter
+    python scripts/run_walk_forward_analysis.py --period month
 
 This is research-only backtesting. It does not execute live trades.
 """
@@ -25,6 +26,7 @@ from src.market_data.timeframe_loader import load_xauusd_timeframes
 from src.settings import load_settings
 from src.strategy_lab import strategy_v50_pine
 from src.strategy_lab.v50_mtf_features import build_v50_mtf_dataset
+from src.strategy_lab.strategy_v50_candidates import export_v50_candidate_walk_forward
 from src.strategy_lab.walk_forward_analysis import (
     PERIOD_CHOICES,
     WALK_FORWARD_COLUMNS,
@@ -90,6 +92,7 @@ def main() -> None:
         show_progress=True,
     )
     summary = summarize_walk_forward_results(analysis)
+    candidate_report_path = export_v50_candidate_walk_forward(analysis, args.period)
 
     print("")
     print("Walk-forward table:")
@@ -104,6 +107,7 @@ def main() -> None:
     print(summary.to_string(index=False))
     print("")
     print(f"Walk-forward report exported: {WALK_FORWARD_REPORT_PATH}")
+    print(f"V50 candidate walk-forward report exported: {candidate_report_path}")
     print("Important: this is backtesting research only, not live trading.")
 
 

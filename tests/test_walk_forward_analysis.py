@@ -7,6 +7,7 @@ from src.strategy.rules import StrategyConfig
 from src.strategy_lab.lab import get_default_strategy_specs
 from src.strategy_lab.strategy_v5 import STRATEGY_NAME as FEATURE_FILTERED_NAME
 from src.strategy_lab.strategy_v6 import STRATEGY_NAME as RELAXED_OFFASIA_NAME
+from src.strategy_lab.strategy_v50_candidates import OFFICIAL_CANDIDATE_STRATEGY_NAMES
 from src.strategy_lab.strategy_v50_pine import MTF_STRATEGY_NAME, STRATEGY_NAME as V50_TECHNICAL_NAME
 from src.strategy_lab.v50_mtf_features import build_v50_mtf_dataset
 from src.strategy_lab.walk_forward_analysis import (
@@ -73,7 +74,7 @@ def make_mtf_walk_forward_data() -> pd.DataFrame:
     return build_v50_mtf_dataset(timeframes)
 
 
-def test_split_into_periods_yearly_half_and_quarter():
+def test_split_into_periods_yearly_half_quarter_and_month():
     dates = pd.to_datetime(
         [
             "2025-01-01",
@@ -88,10 +89,12 @@ def test_split_into_periods_yearly_half_and_quarter():
     yearly = split_into_periods(df, "yearly")
     half = split_into_periods(df, "half")
     quarter = split_into_periods(df, "quarter")
+    month = split_into_periods(df, "month")
 
     assert len(yearly) == 2
     assert len(half) == 3
     assert len(quarter) == 5
+    assert len(month) == 5
     assert yearly[0].period_start == pd.Timestamp("2025-01-01")
     assert half[1].period_start == pd.Timestamp("2025-07-01")
 
@@ -113,6 +116,7 @@ def test_walk_forward_output_contains_required_columns_and_strategies(tmp_path):
         FEATURE_FILTERED_NAME,
         RELAXED_OFFASIA_NAME,
         V50_TECHNICAL_NAME,
+        *OFFICIAL_CANDIDATE_STRATEGY_NAMES,
         MTF_STRATEGY_NAME,
     }.issubset(set(analysis["strategy_name"]))
     assert {"total_trades", "profit_factor", "net_profit", "max_drawdown"}.issubset(analysis.columns)
@@ -140,6 +144,7 @@ def test_walk_forward_strategy_specs_include_best_current_candidates():
     default_names = {spec.name for spec in get_default_strategy_specs()}
 
     assert names == default_names
+    assert set(OFFICIAL_CANDIDATE_STRATEGY_NAMES).issubset(names)
     assert MTF_STRATEGY_NAME in names
 
 

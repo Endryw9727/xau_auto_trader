@@ -20,7 +20,7 @@ from src.strategy_lab.lab import StrategySpec, get_default_strategy_specs
 
 
 WALK_FORWARD_REPORT_PATH = Path("reports/strategy_lab/walk_forward_analysis.csv")
-PERIOD_CHOICES = ("yearly", "half", "quarter")
+PERIOD_CHOICES = ("yearly", "half", "quarter", "month")
 WALK_FORWARD_COLUMNS = [
     "strategy_name",
     "period_start",
@@ -71,7 +71,7 @@ def get_walk_forward_strategy_specs() -> list[StrategySpec]:
 
 
 def split_into_periods(df: pd.DataFrame, period: str) -> list[PeriodSlice]:
-    """Split a datetime-indexed DataFrame into yearly, half-yearly, or quarterly slices."""
+    """Split a datetime-indexed DataFrame into yearly, half-yearly, quarterly, or monthly slices."""
     if period not in PERIOD_CHOICES:
         raise ValueError(f"period must be one of: {', '.join(PERIOD_CHOICES)}")
 
@@ -288,7 +288,10 @@ def _period_keys(index: pd.DatetimeIndex, period: str) -> list[tuple[int, int]]:
             for timestamp in index
         ]
 
-    return [(timestamp.year, timestamp.quarter) for timestamp in index]
+    if period == "quarter":
+        return [(timestamp.year, timestamp.quarter) for timestamp in index]
+
+    return [(timestamp.year, timestamp.month) for timestamp in index]
 
 
 def _empty_metrics() -> BacktestMetrics:

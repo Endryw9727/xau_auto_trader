@@ -31,6 +31,7 @@ from src.strategy_lab import (
     strategy_v4,
     strategy_v5,
     strategy_v6,
+    strategy_v50_candidates,
     strategy_v50_pine,
 )
 
@@ -114,6 +115,24 @@ def get_default_strategy_specs() -> list[StrategySpec]:
             version="strategy_v50_pine",
             signal_generator=strategy_v50_pine.generate_signal,
             description="Research-safe technical approximation of Pine V50 Structure Scalper.",
+        ),
+        StrategySpec(
+            name=strategy_v50_candidates.LOW_RISK_LONDON_STRATEGY_NAME,
+            version="strategy_v50_low_risk_london",
+            signal_generator=strategy_v50_candidates.generate_low_risk_london_signal,
+            description="V50 technical candidate filtered to London sessions.",
+        ),
+        StrategySpec(
+            name=strategy_v50_candidates.BALANCED_NO_ASIA_LONDON_STRATEGY_NAME,
+            version="strategy_v50_balanced_no_asia_london",
+            signal_generator=strategy_v50_candidates.generate_balanced_no_asia_london_signal,
+            description="V50 technical candidate: long-only with ASIA/LONDON blocked.",
+        ),
+        StrategySpec(
+            name=strategy_v50_candidates.GROWTH_LONG_ALL_SHORT_LONDON_STRATEGY_NAME,
+            version="strategy_v50_growth_long_all_short_london",
+            signal_generator=strategy_v50_candidates.generate_growth_long_all_short_london_signal,
+            description="V50 technical candidate: long all sessions, shorts only London.",
         ),
         StrategySpec(
             name=strategy_v50_pine.MTF_STRATEGY_NAME,

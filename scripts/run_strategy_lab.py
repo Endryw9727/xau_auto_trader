@@ -23,6 +23,7 @@ from src.data_feed.market_data import load_csv_data
 from src.main import build_backtest_config, build_strategy_config
 from src.settings import load_settings
 from src.strategy_lab.lab import run_strategy_lab
+from src.strategy_lab.strategy_v50_candidates import export_v50_candidate_comparison
 
 
 RAW_DATA_PATH = Path("data/raw/xauusd.csv")
@@ -133,6 +134,8 @@ def main() -> None:
     print("")
     print(f"Comparison report exported: {result.report_path}")
     print(f"Trades by strategy exported: {result.trades_report_path}")
+    candidate_path = export_v50_candidate_comparison(result.comparison)
+    print(f"V50 candidate comparison exported: {candidate_path}")
     print("Important: Strategy Lab is backtesting only, not live trading.")
 
 

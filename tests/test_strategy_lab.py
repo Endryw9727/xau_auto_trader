@@ -11,6 +11,7 @@ from src.strategy_lab import (
     strategy_v4,
     strategy_v5,
     strategy_v6,
+    strategy_v50_candidates,
     strategy_v50_pine,
 )
 from src.strategy_lab.lab import COMPARISON_FILENAME, get_default_strategy_specs, run_strategy_lab
@@ -207,6 +208,9 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
         "mtf_feature_filtered_strategy",
         "mtf_relaxed_offasia_strategy",
         "v50_pine_technical_strategy",
+        "v50_low_risk_london_strategy",
+        "v50_balanced_no_asia_london_strategy",
+        "v50_growth_long_all_short_london_strategy",
         "v50_pine_mtf_strategy",
     }
     saved = pd.read_csv(tmp_path / COMPARISON_FILENAME)
@@ -217,7 +221,7 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
     assert result.report_path.exists()
     assert set(result.comparison["strategy_name"]) == expected_names
     assert set(saved["strategy_name"]) == expected_names
-    assert len(get_default_strategy_specs()) == 8
+    assert len(get_default_strategy_specs()) == 11
     assert "net_profit" in saved.columns
     assert "max_drawdown" in saved.columns
     assert strict_row["risk_per_trade"] == 0.0025
@@ -273,10 +277,13 @@ def test_strategy_lab_research_only_without_live_or_api_references():
         "src/strategy_lab/strategy_v4.py",
         "src/strategy_lab/strategy_v5.py",
         "src/strategy_lab/strategy_v6.py",
+        "src/strategy_lab/strategy_v50_candidates.py",
         "src/strategy_lab/strategy_v50_pine.py",
+        "src/strategy_lab/v50_edge_filters.py",
         "src/strategy_lab/v50_mtf_features.py",
         "src/strategy_lab/lab.py",
         "scripts/run_strategy_lab.py",
+        "scripts/analyze_v50_candidate_edges.py",
         "scripts/run_v50_mtf_lab.py",
     ]
 
@@ -292,6 +299,7 @@ def test_strategy_lab_includes_v50_pine_candidate():
     names = {spec.name for spec in get_default_strategy_specs()}
 
     assert strategy_v50_pine.STRATEGY_NAME in names
+    assert set(strategy_v50_candidates.OFFICIAL_CANDIDATE_STRATEGY_NAMES).issubset(names)
     assert strategy_v50_pine.MTF_STRATEGY_NAME in names
 
 

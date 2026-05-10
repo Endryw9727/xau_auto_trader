@@ -13,6 +13,7 @@ from src.strategy_lab import (
     strategy_v4,
     strategy_v5,
     strategy_v6,
+    strategy_v50_candidates,
     strategy_v50_pine,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "strategy_v4",
     "strategy_v5",
     "strategy_v6",
+    "strategy_v50_candidates",
     "strategy_v50_pine",
 ]

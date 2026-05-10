@@ -15,6 +15,9 @@ import pandas as pd
 
 DEFAULT_DIAGNOSTIC_STRATEGIES = (
     "v50_pine_technical_strategy",
+    "v50_low_risk_london_strategy",
+    "v50_balanced_no_asia_london_strategy",
+    "v50_growth_long_all_short_london_strategy",
     "v50_pine_mtf_strategy",
     "mtf_relaxed_offasia_strategy",
     "mtf_feature_filtered_strategy",
