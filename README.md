@@ -117,6 +117,7 @@ Strategie iniziali:
 - mtf_momentum_pullback_strategy
 - mtf_strict_offsession_strategy
 - mtf_feature_filtered_strategy
+- mtf_relaxed_offasia_strategy
 
 Output:
 - reports/strategy_lab/strategy_comparison.csv

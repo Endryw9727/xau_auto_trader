@@ -4,7 +4,7 @@ from scripts.run_strategy_lab import QUICK_CANDLES, parse_args, select_strategy_
 from src.backtesting.backtester import BacktestConfig
 from src.lab.strategy_lab import StrategyVariant, run_strategy_lab as run_legacy_strategy_lab
 from src.strategy.rules import StrategyConfig
-from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4, strategy_v5
+from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4, strategy_v5, strategy_v6
 from src.strategy_lab.lab import COMPARISON_FILENAME, get_default_strategy_specs, run_strategy_lab
 
 
@@ -165,6 +165,21 @@ def test_strategy_v5_blocks_impulse_candle_regime():
     assert "candle regime=impulse" in signal.reason
 
 
+def test_strategy_v6_generates_relaxed_candidate_signal():
+    data = make_feature_filtered_signal_data()
+    data.loc[data.index[-1], "trend_regime"] = "neutral"
+    data.loc[data.index[-1], "candle_regime"] = "impulse"
+    data.loc[data.index[-1], "adx"] = 1.0
+    data.loc[data.index[-1], "ADX_14"] = 1.0
+
+    signal = strategy_v6.generate_signal(data, StrategyConfig())
+
+    assert signal.side == "BUY"
+    assert signal.stop_loss is not None
+    assert signal.take_profit is not None
+    assert "Feature filtered" in signal.reason
+
+
 def test_strategy_lab_exports_comparison_csv(tmp_path):
     df = make_strategy_lab_data()
     config = BacktestConfig(warmup_candles=60, allowed_sessions=None)
@@ -182,20 +197,25 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
         "mtf_momentum_pullback_strategy",
         "mtf_strict_offsession_strategy",
         "mtf_feature_filtered_strategy",
+        "mtf_relaxed_offasia_strategy",
     }
     saved = pd.read_csv(tmp_path / COMPARISON_FILENAME)
     strict_row = saved[saved["strategy_name"] == "mtf_strict_offsession_strategy"].iloc[0]
+    relaxed_row = saved[saved["strategy_name"] == "mtf_relaxed_offasia_strategy"].iloc[0]
 
     assert result.report_path == tmp_path / COMPARISON_FILENAME
     assert result.report_path.exists()
     assert set(result.comparison["strategy_name"]) == expected_names
     assert set(saved["strategy_name"]) == expected_names
-    assert len(get_default_strategy_specs()) == 5
+    assert len(get_default_strategy_specs()) == 6
     assert "net_profit" in saved.columns
     assert "max_drawdown" in saved.columns
     assert strict_row["risk_per_trade"] == 0.0025
     assert strict_row["min_risk_reward"] == 2.0
     assert strict_row["allowed_sessions"] == "Off Session"
+    assert relaxed_row["risk_per_trade"] == 0.005
+    assert relaxed_row["min_risk_reward"] == 2.0
+    assert relaxed_row["allowed_sessions"] == "Off Session, Asia"
 
 
 def test_strategy_lab_progress_mode_runs(tmp_path, capsys):
@@ -214,6 +234,7 @@ def test_strategy_lab_progress_mode_runs(tmp_path, capsys):
     assert "Running strategy:" in captured
     assert "Strategy Lab total time:" in captured
     assert "mtf_feature_filtered_strategy" in set(result.comparison["strategy_name"])
+    assert "mtf_relaxed_offasia_strategy" in set(result.comparison["strategy_name"])
 
 
 def test_run_strategy_lab_quick_selection_uses_latest_default_window():
@@ -241,6 +262,7 @@ def test_strategy_lab_research_only_without_live_or_api_references():
     checked_files = [
         "src/strategy_lab/strategy_v4.py",
         "src/strategy_lab/strategy_v5.py",
+        "src/strategy_lab/strategy_v6.py",
         "src/strategy_lab/lab.py",
         "scripts/run_strategy_lab.py",
     ]

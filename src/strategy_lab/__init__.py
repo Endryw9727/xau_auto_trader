@@ -6,7 +6,7 @@ from src.strategy_lab.lab import (
     get_default_strategy_specs,
     run_strategy_lab,
 )
-from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4, strategy_v5
+from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4, strategy_v5, strategy_v6
 
 __all__ = [
     "StrategyLabResult",
@@ -18,4 +18,5 @@ __all__ = [
     "strategy_v3",
     "strategy_v4",
     "strategy_v5",
+    "strategy_v6",
 ]

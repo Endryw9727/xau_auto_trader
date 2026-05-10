@@ -18,7 +18,7 @@ from src.backtesting.backtester import BacktestConfig, BacktestResult, run_backt
 from src.backtesting.metrics import metrics_to_dict
 from src.strategy.rules import StrategyConfig
 from src.strategy.signals import TradingSignal
-from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4, strategy_v5
+from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4, strategy_v5, strategy_v6
 
 
 SignalGenerator = Callable[[pd.DataFrame, StrategyConfig], TradingSignal]
@@ -83,6 +83,15 @@ def get_default_strategy_specs() -> list[StrategySpec]:
             version="strategy_v5",
             signal_generator=strategy_v5.generate_signal,
             description="MTF momentum pullback filtered by FeatureEngine regimes.",
+        ),
+        StrategySpec(
+            name=strategy_v6.STRATEGY_NAME,
+            version="strategy_v6",
+            signal_generator=strategy_v6.generate_signal,
+            description="Relaxed Off Session + Asia feature-filtered candidate from controlled sweep.",
+            risk_per_trade=strategy_v6.REQUIRED_RISK_PER_TRADE,
+            min_risk_reward=strategy_v6.REQUIRED_MIN_RISK_REWARD,
+            allowed_sessions=strategy_v6.REQUIRED_ALLOWED_SESSIONS,
         ),
     ]
 
