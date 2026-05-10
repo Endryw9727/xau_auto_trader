@@ -22,15 +22,24 @@ from src.strategy_lab.v50_edge_filters import (
 LOW_RISK_LONDON_STRATEGY_NAME = "v50_low_risk_london_strategy"
 BALANCED_NO_ASIA_LONDON_STRATEGY_NAME = "v50_balanced_no_asia_london_strategy"
 GROWTH_LONG_ALL_SHORT_LONDON_STRATEGY_NAME = "v50_growth_long_all_short_london_strategy"
+FINAL_LOW_RISK_STRATEGY_NAME = "v50_final_low_risk_strategy"
+FINAL_BALANCED_STRATEGY_NAME = "v50_final_balanced_strategy"
+FINAL_GROWTH_STRATEGY_NAME = "v50_final_growth_strategy"
 
 OFFICIAL_CANDIDATE_STRATEGY_NAMES = (
     LOW_RISK_LONDON_STRATEGY_NAME,
     BALANCED_NO_ASIA_LONDON_STRATEGY_NAME,
     GROWTH_LONG_ALL_SHORT_LONDON_STRATEGY_NAME,
 )
+FINAL_CANDIDATE_STRATEGY_NAMES = (
+    FINAL_LOW_RISK_STRATEGY_NAME,
+    FINAL_BALANCED_STRATEGY_NAME,
+    FINAL_GROWTH_STRATEGY_NAME,
+)
 V50_CANDIDATE_STRATEGY_NAMES = (
     strategy_v50_pine.STRATEGY_NAME,
     *OFFICIAL_CANDIDATE_STRATEGY_NAMES,
+    *FINAL_CANDIDATE_STRATEGY_NAMES,
 )
 V50_CANDIDATE_COMPARISON_PATH = Path("reports/strategy_lab/v50_candidate_comparison.csv")
 V50_CANDIDATE_WALK_FORWARD_QUARTER_PATH = Path("reports/strategy_lab/v50_candidate_walk_forward_quarter.csv")
@@ -50,12 +59,29 @@ GROWTH_LONG_ALL_SHORT_LONDON_VARIANT = V50EdgeFilterVariant(
     GROWTH_LONG_ALL_SHORT_LONDON_STRATEGY_NAME,
     short_allowed_sessions=("LONDON",),
 )
+FINAL_LOW_RISK_VARIANT = V50EdgeFilterVariant(
+    FINAL_LOW_RISK_STRATEGY_NAME,
+    allowed_sessions=("LONDON",),
+)
+FINAL_BALANCED_VARIANT = V50EdgeFilterVariant(
+    FINAL_BALANCED_STRATEGY_NAME,
+    long_allowed_sessions=("LONDON", "NEW YORK"),
+    short_allowed_sessions=("LONDON",),
+)
+FINAL_GROWTH_VARIANT = V50EdgeFilterVariant(
+    FINAL_GROWTH_STRATEGY_NAME,
+    blocked_sessions=("ASIA/LONDON",),
+    short_allowed_sessions=("LONDON",),
+)
 
 generate_low_risk_london_signal = make_v50_edge_filter_signal_generator(LOW_RISK_LONDON_VARIANT)
 generate_balanced_no_asia_london_signal = make_v50_edge_filter_signal_generator(BALANCED_NO_ASIA_LONDON_VARIANT)
 generate_growth_long_all_short_london_signal = make_v50_edge_filter_signal_generator(
     GROWTH_LONG_ALL_SHORT_LONDON_VARIANT
 )
+generate_final_low_risk_signal = make_v50_edge_filter_signal_generator(FINAL_LOW_RISK_VARIANT)
+generate_final_balanced_signal = make_v50_edge_filter_signal_generator(FINAL_BALANCED_VARIANT)
+generate_final_growth_signal = make_v50_edge_filter_signal_generator(FINAL_GROWTH_VARIANT)
 
 
 def export_v50_candidate_comparison(

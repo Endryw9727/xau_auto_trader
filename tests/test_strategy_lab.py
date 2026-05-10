@@ -211,6 +211,9 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
         "v50_low_risk_london_strategy",
         "v50_balanced_no_asia_london_strategy",
         "v50_growth_long_all_short_london_strategy",
+        "v50_final_low_risk_strategy",
+        "v50_final_balanced_strategy",
+        "v50_final_growth_strategy",
         "v50_pine_mtf_strategy",
     }
     saved = pd.read_csv(tmp_path / COMPARISON_FILENAME)
@@ -221,7 +224,7 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
     assert result.report_path.exists()
     assert set(result.comparison["strategy_name"]) == expected_names
     assert set(saved["strategy_name"]) == expected_names
-    assert len(get_default_strategy_specs()) == 11
+    assert len(get_default_strategy_specs()) == 14
     assert "net_profit" in saved.columns
     assert "max_drawdown" in saved.columns
     assert strict_row["risk_per_trade"] == 0.0025
@@ -300,6 +303,7 @@ def test_strategy_lab_includes_v50_pine_candidate():
 
     assert strategy_v50_pine.STRATEGY_NAME in names
     assert set(strategy_v50_candidates.OFFICIAL_CANDIDATE_STRATEGY_NAMES).issubset(names)
+    assert set(strategy_v50_candidates.FINAL_CANDIDATE_STRATEGY_NAMES).issubset(names)
     assert strategy_v50_pine.MTF_STRATEGY_NAME in names
 
 

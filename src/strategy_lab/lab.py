@@ -135,6 +135,24 @@ def get_default_strategy_specs() -> list[StrategySpec]:
             description="V50 technical candidate: long all sessions, shorts only London.",
         ),
         StrategySpec(
+            name=strategy_v50_candidates.FINAL_LOW_RISK_STRATEGY_NAME,
+            version="strategy_v50_final_low_risk",
+            signal_generator=strategy_v50_candidates.generate_final_low_risk_signal,
+            description="Final V50 low-risk candidate based on London-only growth refinement.",
+        ),
+        StrategySpec(
+            name=strategy_v50_candidates.FINAL_BALANCED_STRATEGY_NAME,
+            version="strategy_v50_final_balanced",
+            signal_generator=strategy_v50_candidates.generate_final_balanced_signal,
+            description="Final V50 balanced candidate: longs London/New York, shorts London.",
+        ),
+        StrategySpec(
+            name=strategy_v50_candidates.FINAL_GROWTH_STRATEGY_NAME,
+            version="strategy_v50_final_growth",
+            signal_generator=strategy_v50_candidates.generate_final_growth_signal,
+            description="Final V50 growth candidate: ASIA/LONDON blocked, shorts London-only.",
+        ),
+        StrategySpec(
             name=strategy_v50_pine.MTF_STRATEGY_NAME,
             version="strategy_v50_mtf",
             signal_generator=strategy_v50_pine.generate_mtf_signal,

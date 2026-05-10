@@ -41,13 +41,15 @@ def make_candidate_trades() -> pd.DataFrame:
 
 
 def make_candidate_comparison() -> pd.DataFrame:
+    strategy_names = list(V50_CANDIDATE_STRATEGY_NAMES)
+    row_count = len(strategy_names)
     return pd.DataFrame(
         {
-            "strategy_name": list(V50_CANDIDATE_STRATEGY_NAMES),
-            "profit_factor": [1.1, 1.2, 1.3, 1.4],
-            "net_profit": [10.0, 20.0, 30.0, 40.0],
-            "max_drawdown": [5.0, 6.0, 7.0, 8.0],
-            "expectancy": [0.5, 0.6, 0.7, 0.8],
+            "strategy_name": strategy_names,
+            "profit_factor": [1.1 + index * 0.1 for index in range(row_count)],
+            "net_profit": [10.0 + index * 10.0 for index in range(row_count)],
+            "max_drawdown": [5.0 + index for index in range(row_count)],
+            "expectancy": [0.5 + index * 0.1 for index in range(row_count)],
         }
     )
 
