@@ -336,6 +336,7 @@ def run_feature_filter_variant(
         backtest_config=variant_backtest_config,
         save_signals=False,
         signal_generator=signal_generator,
+        strategy_name=variant.variant_name,
     )
 
 

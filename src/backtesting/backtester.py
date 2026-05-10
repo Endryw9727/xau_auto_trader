@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 import pandas as pd
 
@@ -30,6 +31,43 @@ from src.journal.trade_journal import save_signal_to_db
 
 
 SignalGenerator = Callable[[pd.DataFrame, StrategyConfig], TradingSignal]
+DEFAULT_STRATEGY_NAME = "existing_strategy"
+TRADES_BY_STRATEGY_FILENAME = "trades_by_strategy.csv"
+TRADE_REPORT_COLUMNS = [
+    "strategy_name",
+    "entry_time",
+    "exit_time",
+    "timestamp_open",
+    "timestamp_close",
+    "side",
+    "side_label",
+    "entry_price",
+    "stop_loss",
+    "take_profit",
+    "exit_price",
+    "position_size",
+    "result",
+    "pnl",
+    "profit_loss",
+    "pnl_pct",
+    "bars_in_trade",
+    "session",
+    "setup_type",
+    "score_long",
+    "score_short",
+    "reason",
+    "signal_reason",
+    "reason_entry",
+    "reason_exit",
+    "symbol",
+    "timeframe",
+    "risk_percent",
+    "risk_amount",
+    "risk_reward",
+    "confidence",
+    "balance_before",
+    "balance_after",
+]
 
 
 @dataclass(frozen=True)
@@ -89,6 +127,7 @@ def run_backtest(
     signal_generator: SignalGenerator | None = None,
     save_trades_to_db: bool = True,
     save_signals_to_db: bool = True,
+    strategy_name: str = DEFAULT_STRATEGY_NAME,
 ) -> BacktestResult:
     """
     Run a simple backtest on OHLCV data.
@@ -113,6 +152,9 @@ def run_backtest(
         raise ValueError("Not enough candles for backtest warmup")
 
     data = add_all_core_indicators(df)
+    prepare_backtest_data = getattr(signal_generator, "prepare_backtest_data", None)
+    if prepare_backtest_data is not None:
+        data = prepare_backtest_data(data)
     rolling_window_candles = _resolve_rolling_window_candles(
         backtest_config,
         signal_generator,
@@ -195,6 +237,7 @@ def run_backtest(
             slippage_points=backtest_config.slippage_points,
         )
 
+        balance_before = balance
         balance += trade_result["profit_loss"]
         current_daily_pnl += trade_result["profit_loss"]
 
@@ -203,15 +246,24 @@ def run_backtest(
         else:
             consecutive_losses = 0
 
+        signal_metadata = _extract_signal_metadata(signal)
         trade_result.update(
             {
+                "strategy_name": strategy_name,
                 "symbol": signal.symbol,
                 "timeframe": signal.timeframe,
                 "risk_percent": decision.risk_percent,
                 "risk_amount": decision.risk_amount,
                 "risk_reward": signal.risk_reward,
                 "confidence": signal.confidence,
+                "session": signal_metadata["session"] or session_name,
+                "setup_type": signal_metadata["setup_type"],
+                "score_long": signal_metadata["score_long"],
+                "score_short": signal_metadata["score_short"],
+                "signal_reason": signal.reason,
+                "reason": signal.reason,
                 "reason_entry": signal.reason,
+                "balance_before": balance_before,
                 "balance_after": balance,
             }
         )
@@ -220,7 +272,7 @@ def run_backtest(
 
         i = max(exit_index + 1, i + 1)
 
-    trades_df = pd.DataFrame(trades)
+    trades_df = format_trades_for_reporting(pd.DataFrame(trades), strategy_name=strategy_name)
     metrics = calculate_metrics(trades_df, backtest_config.initial_balance)
 
     return BacktestResult(
@@ -236,12 +288,62 @@ def export_backtest_report(result: BacktestResult, output_dir: str | Path = "rep
     output_path.mkdir(parents=True, exist_ok=True)
 
     trades_path = output_path / "trades.csv"
+    trades_by_strategy_path = output_path / TRADES_BY_STRATEGY_FILENAME
     metrics_path = output_path / "metrics.csv"
+    trades = format_trades_for_reporting(result.trades)
 
-    result.trades.to_csv(trades_path, index=False)
+    trades.to_csv(trades_path, index=False)
+    trades.to_csv(trades_by_strategy_path, index=False)
     pd.DataFrame([metrics_to_dict(result.metrics)]).to_csv(metrics_path, index=False)
 
     return trades_path, metrics_path
+
+
+def format_trades_for_reporting(
+    trades: pd.DataFrame,
+    strategy_name: str | None = None,
+) -> pd.DataFrame:
+    """Return trades with stable reporting columns and backward-compatible aliases."""
+    result = trades.copy()
+
+    if "strategy_name" not in result.columns:
+        result["strategy_name"] = strategy_name or DEFAULT_STRATEGY_NAME
+    elif strategy_name is not None:
+        result["strategy_name"] = result["strategy_name"].where(
+            result["strategy_name"].notna(),
+            strategy_name,
+        )
+
+    _copy_alias(result, "timestamp_open", "entry_time")
+    _copy_alias(result, "entry_time", "timestamp_open")
+    _copy_alias(result, "timestamp_close", "exit_time")
+    _copy_alias(result, "exit_time", "timestamp_close")
+    _copy_alias(result, "profit_loss", "pnl")
+    _copy_alias(result, "pnl", "profit_loss")
+    _copy_alias(result, "signal_reason", "reason")
+    _copy_alias(result, "reason_entry", "signal_reason")
+    _copy_alias(result, "signal_reason", "reason_entry")
+
+    if "side_label" not in result.columns:
+        result["side_label"] = result["side"].apply(_side_label) if "side" in result.columns else pd.NA
+
+    if "session" not in result.columns and "entry_time" in result.columns:
+        result["session"] = pd.to_datetime(result["entry_time"], errors="coerce").dt.hour.apply(
+            lambda hour: classify_hour_to_session(int(hour)) if pd.notna(hour) else "Unknown"
+        )
+
+    if "setup_type" not in result.columns and "signal_reason" in result.columns:
+        result["setup_type"] = result["signal_reason"].apply(_setup_type_from_reason)
+
+    if "pnl_pct" not in result.columns:
+        result["pnl_pct"] = _calculate_pnl_pct(result)
+
+    for column in TRADE_REPORT_COLUMNS:
+        if column not in result.columns:
+            result[column] = pd.NA
+
+    extra_columns = [column for column in result.columns if column not in TRADE_REPORT_COLUMNS]
+    return result[TRADE_REPORT_COLUMNS + extra_columns]
 
 
 def _simulate_trade_exit(
@@ -320,14 +422,19 @@ def _simulate_trade_exit(
             {
                 "timestamp_open": entry_timestamp,
                 "timestamp_close": timestamp_close,
+                "entry_time": entry_timestamp,
+                "exit_time": timestamp_close,
                 "side": side,
+                "side_label": _side_label(side),
                 "entry_price": adjusted_entry,
                 "stop_loss": stop_loss,
                 "take_profit": take_profit,
                 "exit_price": exit_price,
                 "position_size": position_size,
                 "result": result,
+                "pnl": profit_loss,
                 "profit_loss": profit_loss,
+                "bars_in_trade": j - entry_index,
                 "reason_exit": reason_exit,
             },
             j,
@@ -350,14 +457,19 @@ def _simulate_trade_exit(
         {
             "timestamp_open": entry_timestamp,
             "timestamp_close": last_timestamp,
+            "entry_time": entry_timestamp,
+            "exit_time": last_timestamp,
             "side": side,
+            "side_label": _side_label(side),
             "entry_price": adjusted_entry,
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "exit_price": exit_price,
             "position_size": position_size,
             "result": result,
+            "pnl": profit_loss,
             "profit_loss": profit_loss,
+            "bars_in_trade": len(data) - 1 - entry_index,
             "reason_exit": "End of data",
         },
         len(data) - 1,
@@ -374,3 +486,78 @@ def _validate_ohlcv(df: pd.DataFrame) -> None:
 
     if not isinstance(df.index, pd.DatetimeIndex):
         raise ValueError("DataFrame must have a DatetimeIndex")
+
+
+def _extract_signal_metadata(signal: TradingSignal) -> dict:
+    reason = signal.reason or ""
+    score = _parse_optional_float(_extract_reason_field(reason, "score"))
+    opposite_score = _parse_optional_float(_extract_reason_field(reason, "opposite_score"))
+    score_long = _parse_optional_float(
+        _extract_reason_field(reason, "scoreLong")
+        or _extract_reason_field(reason, "score_long")
+    )
+    score_short = _parse_optional_float(
+        _extract_reason_field(reason, "scoreShort")
+        or _extract_reason_field(reason, "score_short")
+    )
+
+    if score is not None and opposite_score is not None:
+        if signal.side == "BUY":
+            score_long = score if score_long is None else score_long
+            score_short = opposite_score if score_short is None else score_short
+        elif signal.side == "SELL":
+            score_short = score if score_short is None else score_short
+            score_long = opposite_score if score_long is None else score_long
+
+    return {
+        "session": _extract_reason_field(reason, "session") or _extract_reason_field(reason, "Session"),
+        "setup_type": _setup_type_from_reason(reason),
+        "score_long": score_long,
+        "score_short": score_short,
+    }
+
+
+def _extract_reason_field(reason: str, field_name: str) -> str | None:
+    pattern = re.compile(rf"(?:^|\|\s*){re.escape(field_name)}\s*=\s*([^|]+)", re.IGNORECASE)
+    match = pattern.search(reason)
+    if match is None:
+        return None
+    value = match.group(1).strip()
+    return value or None
+
+
+def _parse_optional_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _setup_type_from_reason(reason: object) -> str | None:
+    if not isinstance(reason, str) or not reason.strip():
+        return None
+    return reason.split("|", maxsplit=1)[0].strip() or None
+
+
+def _copy_alias(result: pd.DataFrame, source: str, target: str) -> None:
+    if source in result.columns and target not in result.columns:
+        result[target] = result[source]
+
+
+def _calculate_pnl_pct(trades: pd.DataFrame) -> pd.Series:
+    if "pnl" not in trades.columns or "balance_before" not in trades.columns:
+        return pd.Series([pd.NA] * len(trades), index=trades.index, dtype="object")
+
+    pnl = pd.to_numeric(trades["pnl"], errors="coerce")
+    balance_before = pd.to_numeric(trades["balance_before"], errors="coerce")
+    return (pnl / balance_before.where(balance_before != 0) * 100.0).astype("float")
+
+
+def _side_label(side: object) -> str:
+    if side == "BUY":
+        return "LONG"
+    if side == "SELL":
+        return "SHORT"
+    return str(side) if side is not None else "Unknown"

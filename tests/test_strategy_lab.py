@@ -4,7 +4,15 @@ from scripts.run_strategy_lab import QUICK_CANDLES, parse_args, select_strategy_
 from src.backtesting.backtester import BacktestConfig
 from src.lab.strategy_lab import StrategyVariant, run_strategy_lab as run_legacy_strategy_lab
 from src.strategy.rules import StrategyConfig
-from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4, strategy_v5, strategy_v6
+from src.strategy_lab import (
+    strategy_v1,
+    strategy_v2,
+    strategy_v3,
+    strategy_v4,
+    strategy_v5,
+    strategy_v6,
+    strategy_v50_pine,
+)
 from src.strategy_lab.lab import COMPARISON_FILENAME, get_default_strategy_specs, run_strategy_lab
 
 
@@ -198,6 +206,8 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
         "mtf_strict_offsession_strategy",
         "mtf_feature_filtered_strategy",
         "mtf_relaxed_offasia_strategy",
+        "v50_pine_technical_strategy",
+        "v50_pine_mtf_strategy",
     }
     saved = pd.read_csv(tmp_path / COMPARISON_FILENAME)
     strict_row = saved[saved["strategy_name"] == "mtf_strict_offsession_strategy"].iloc[0]
@@ -207,7 +217,7 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
     assert result.report_path.exists()
     assert set(result.comparison["strategy_name"]) == expected_names
     assert set(saved["strategy_name"]) == expected_names
-    assert len(get_default_strategy_specs()) == 6
+    assert len(get_default_strategy_specs()) == 8
     assert "net_profit" in saved.columns
     assert "max_drawdown" in saved.columns
     assert strict_row["risk_per_trade"] == 0.0025
@@ -263,8 +273,11 @@ def test_strategy_lab_research_only_without_live_or_api_references():
         "src/strategy_lab/strategy_v4.py",
         "src/strategy_lab/strategy_v5.py",
         "src/strategy_lab/strategy_v6.py",
+        "src/strategy_lab/strategy_v50_pine.py",
+        "src/strategy_lab/v50_mtf_features.py",
         "src/strategy_lab/lab.py",
         "scripts/run_strategy_lab.py",
+        "scripts/run_v50_mtf_lab.py",
     ]
 
     for path in checked_files:
@@ -273,6 +286,13 @@ def test_strategy_lab_research_only_without_live_or_api_references():
         assert "submit_order" not in source
         assert "api_key" not in source.lower()
         assert ".env" not in source
+
+
+def test_strategy_lab_includes_v50_pine_candidate():
+    names = {spec.name for spec in get_default_strategy_specs()}
+
+    assert strategy_v50_pine.STRATEGY_NAME in names
+    assert strategy_v50_pine.MTF_STRATEGY_NAME in names
 
 
 def test_legacy_strategy_lab_entrypoint_still_runs():

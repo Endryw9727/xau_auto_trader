@@ -1,0 +1,1148 @@
+//@version=6
+strategy("XAUUSD Structure Scalper V50 Strategy", overlay=true, initial_capital=1000, currency=currency.USD, pyramiding=0, margin_long=1, margin_short=1, commission_type=strategy.commission.percent, commission_value=0.0, default_qty_type=strategy.fixed, default_qty_value=1, calc_on_every_tick=true, calc_on_order_fills=true, process_orders_on_close=true, max_lines_count=500, max_labels_count=500)
+grpEngine = "01. Engine"
+mode = "Structure Scalper"
+useChartSymbol = input.bool(true, "Usa simbolo del grafico", group=grpEngine)
+customSymbol = input.symbol("OANDA:XAUUSD", "Simbolo alternativo", group=grpEngine)
+useClosedHTF = input.bool(true, "Usa candele HTF chiuse", group=grpEngine)
+confirmOnClose = input.bool(true, "Segnali solo a chiusura candela", group=grpEngine)
+grpTf = "02. Timeframe"
+tf4h = input.timeframe("240", "Bias macro", group=grpTf)
+tf1h = input.timeframe("60", "Momentum", group=grpTf)
+tf15 = input.timeframe("15", "Struttura", group=grpTf)
+tf10 = input.timeframe("10", "Filtro trigger", group=grpTf)
+tf5 = input.timeframe("5", "Trigger", group=grpTf)
+tfIntermarket = input.timeframe("60", "DXY / US10Y", group=grpTf)
+grpTech = "03. Parametri tecnici"
+lenWpr = input.int(24, "Williams %R", minval=5, group=grpTech)
+lenRsi = input.int(14, "RSI", minval=5, group=grpTech)
+lenAdx = input.int(14, "ADX / DMI", minval=5, group=grpTech)
+lenAtr = input.int(14, "ATR", minval=5, group=grpTech)
+pivotLen = input.int(5, "Swing structure pivot", minval=2, maxval=20, group=grpTech)
+chochLookback = input.int(24, "Validita BOS/CHOCH (barre)", minval=3, maxval=120, group=grpTech)
+pocLookback = input.int(96, "POC lookback barre", minval=24, maxval=300, group=grpTech)
+pocBins = input.int(24, "POC precisione bins", minval=12, maxval=60, group=grpTech)
+pocAtrZone = input.float(0.35, "Zona POC in ATR", minval=0.05, maxval=2.0, step=0.05, group=grpTech)
+breakoutAtrBuffer = input.float(0.12, "Buffer rottura BOS (ATR)", minval=0.0, maxval=1.0, step=0.01, group=grpTech)
+minBreakBodyAtr = input.float(0.35, "Corpo minimo breakout (ATR)", minval=0.05, maxval=2.0, step=0.05, group=grpTech)
+breakoutVolRatio = input.float(0.75, "Volume minimo breakout", minval=0.1, step=0.05, group=grpTech)
+retestLookback = input.int(16, "Validita retest dopo BOS", minval=2, maxval=80, group=grpTech)
+retestToleranceAtr = input.float(0.30, "Tolleranza retest (ATR)", minval=0.02, maxval=1.0, step=0.01, group=grpTech)
+retestConfirmAtr = input.float(0.08, "Conferma chiusura retest (ATR)", minval=0.0, maxval=0.50, step=0.01, group=grpTech)
+minAdxActive = input.float(16.0, "ADX minimo trigger", minval=5, step=0.5, group=grpTech)
+minAdxSniper = input.float(20.0, "ADX minimo Sniper", minval=5, step=0.5, group=grpTech)
+grpScore = "04. Soglie qualita"
+sniperScoreMin = input.float(82.0, "Score minimo Sniper", minval=60, maxval=99, step=1, group=grpScore)
+scoreGap = input.float(10.0, "Gap minimo LONG vs SHORT", minval=0, maxval=30, step=1, group=grpScore)
+sniperMtfMin = input.int(4, "MTF min Sniper", minval=2, maxval=5, group=grpScore)
+enableSniperReversal = input.bool(true, "Sniper reversal su CHOCH/Sweep", group=grpScore)
+sniperReversalMin = input.float(78.0, "Score minimo reversal Sniper", minval=60, maxval=95, step=1, group=grpScore)
+sniperReversalLtfMin = input.int(2, "Conferme LTF reversal", minval=1, maxval=3, group=grpScore)
+requireIntermarketSniper = input.bool(true, "Sniper richiede DXY/US10Y coerenti", group=grpScore)
+useRegimeFilter = input.bool(true, "Filtro regime HTF anti-trend", group=grpScore)
+shortScorePremium = input.float(4.0, "Extra score richiesto SHORT", minval=0, maxval=20, step=1, group=grpScore)
+longScorePremium = input.float(3.0, "Extra score richiesto LONG", minval=0, maxval=20, step=1, group=grpScore)
+counterTrendExceptionScore = input.float(86.0, "Score eccezione contro-regime", minval=70, maxval=99, step=1, group=grpScore)
+grpFilters = "05. Filtri operativi"
+useSessionFilter = input.bool(true, "Filtra sessione", group=grpFilters)
+sessionTimezone = input.string("Europe/Rome", "Timezone sessioni", group=grpFilters)
+useVolumeFilter = input.bool(false, "Filtra volume/tick volume", group=grpFilters)
+minVolRatio = input.float(0.75, "Volume minimo vs media", minval=0.1, step=0.05, group=grpFilters)
+useVwapPocFilter = input.bool(true, "Filtro VWAP / POC", group=grpFilters)
+useAntiChaseFilter = input.bool(true, "Filtro anti-chase", group=grpFilters)
+useBreakoutRetestFilter = input.bool(true, "Preferisci retest dopo breakout", group=grpFilters)
+allowFirstBreakoutEntry = input.bool(false, "Permetti ingresso sulla prima rottura", group=grpFilters)
+allowContinuationPullback = input.bool(false, "Permetti pullback senza nuovo retest", group=grpFilters)
+useAdaptiveQuality = input.bool(true, "Quality gate adattivo V50", group=grpFilters)
+regimeMode = input.string("Auto", "Regime discrezionale", options=["Auto", "Normal", "Headline High", "Decoupled", "Trend Day"], group=grpFilters)
+headlineRisk = input.string("Medio", "Headline risk manuale", options=["Basso", "Medio", "Alto"], group=grpFilters)
+shockAtrRatio = input.float(1.45, "Auto shock: ATR ratio", minval=1.0, maxval=4.0, step=0.05, group=grpFilters)
+shockCandleAtr = input.float(1.80, "Auto shock: candela ATR", minval=0.5, maxval=5.0, step=0.1, group=grpFilters)
+decoupleLookback = input.int(12, "Lookback decoupling macro", minval=3, maxval=80, group=grpFilters)
+decoupledExtraScore = input.float(2.0, "Extra score decoupled", minval=0, maxval=15, step=1, group=grpFilters)
+headlineExtraScore = input.float(6.0, "Extra score headline high", minval=0, maxval=25, step=1, group=grpFilters)
+trendDayAdx = input.float(24.0, "ADX trend day", minval=10, maxval=60, step=0.5, group=grpFilters)
+trendDayAtrRatio = input.float(1.15, "ATR ratio trend day", minval=0.8, maxval=3.0, step=0.05, group=grpFilters)
+londonExtraScore = input.float(4.0, "Extra score London pura", minval=0, maxval=20, step=1, group=grpFilters)
+londonMinVolRatio = input.float(0.90, "Volume min London pura", minval=0.1, maxval=3.0, step=0.05, group=grpFilters)
+londonMinAdx = input.float(22.0, "ADX min London pura", minval=5, maxval=60, step=0.5, group=grpFilters)
+compressionAtrZone = input.float(0.45, "Zona chop VWAP/POC (ATR)", minval=0.05, maxval=2.0, step=0.05, group=grpFilters)
+longNeedsExtraQuality = input.bool(true, "LONG richiede conferme extra", group=grpFilters)
+longV50ExtraScore = input.float(2.0, "Extra qualita LONG V50", minval=0, maxval=15, step=1, group=grpFilters)
+longHeadlineExtraScore = input.float(4.0, "Extra LONG in headline", minval=0, maxval=20, step=1, group=grpFilters)
+longNeedsCleanStructure = input.bool(true, "LONG solo con struttura pulita", group=grpFilters)
+tp1ProtectQuality = input.bool(true, "Protezione veloce dopo TP1", group=grpFilters)
+maxExtensionAtrSniper = input.float(1.80, "Max estensione Sniper da EMA50 (ATR)", minval=0.5, maxval=6.0, step=0.1, group=grpFilters)
+useLateImpulseGuard = input.bool(true, "Evita ingressi a fine impulso", group=grpFilters)
+lateImpulseLookback = input.int(24, "Lookback impulso esausto", minval=6, maxval=80, group=grpFilters)
+lateImpulseAtrMin = input.float(3.2, "Impulso minimo bloccato (ATR)", minval=1.0, maxval=10.0, step=0.1, group=grpFilters)
+lateImpulseExtensionAtr = input.float(1.15, "Estensione da EMA50 bloccata (ATR)", minval=0.3, maxval=5.0, step=0.05, group=grpFilters)
+lateImpulseRsi = input.float(58.0, "RSI minimo impulso long", minval=45, maxval=80, step=0.5, group=grpFilters)
+postImpulseTopBars = input.int(10, "Max barre dal top impulso", minval=2, maxval=30, group=grpFilters)
+postImpulseRejectAtr = input.float(0.35, "Rigetto dal top bloccato (ATR)", minval=0.05, maxval=2.0, step=0.05, group=grpFilters)
+applyLateGuardShort = input.bool(false, "Applica filtro impulso anche SHORT", group=grpFilters)
+useSessionQualityGuard = input.bool(true, "Quality guard orario", group=grpFilters)
+avoidEarlyAsia = input.bool(true, "Evita early Asia debole", group=grpFilters)
+avoidMidLondon = input.bool(true, "Evita mid-London chop", group=grpFilters)
+avoidLondonFix = input.bool(true, "Evita fix/news spike", group=grpFilters)
+avoidEarlyAsiaSession = input.session("0200-0300", "Evita early Asia debole", group=grpFilters)
+avoidMidLondonSession = input.session("1000-1400", "Evita mid-London chop", group=grpFilters)
+avoidLondonFixSession = input.session("1500-1600", "Evita fix/news spike", group=grpFilters)
+avoidNyShorts = input.bool(false, "Evita SHORT New York deboli", group=grpFilters)
+nyShortExceptionScore = input.float(88.0, "Eccezione SHORT NY score", minval=70, maxval=99, step=1, group=grpFilters)
+allowAPlusTimeOverride = input.bool(false, "Consenti A+ dentro time guard", group=grpFilters)
+aPlusOverrideScore = input.float(90.0, "Score override A+", minval=75, maxval=100, step=1, group=grpFilters)
+avoidLateWeakLongs = input.bool(false, "Evita LONG tardivi deboli", group=grpFilters)
+lateLongGuardSession = input.session("1400-2300", "LONG tardivi solo A+", group=grpFilters)
+lateLongOverrideScore = input.float(90.0, "Score LONG tardivo A+", minval=75, maxval=100, step=1, group=grpFilters)
+useNyLongTrapGuard = input.bool(true, "V50 evita LONG NY deboli", group=grpFilters)
+nyLongTrapSession = input.session("1700-1830", "V50 finestra LONG NY critica", group=grpFilters)
+nyLongTrapOverrideScore = input.float(92.0, "V50 score LONG NY A+", minval=80, maxval=100, step=1, group=grpFilters)
+useNyLateLongBlock = input.bool(true, "V50 blocca LONG NY tardivi", group=grpFilters)
+nyLateLongBlockSession = input.session("1700-1900", "V50 finestra blocco LONG NY", group=grpFilters)
+allowNyLateLongAPlus = input.bool(false, "V50 consenti LONG NY A++", group=grpFilters)
+nyLateLongAPlusScore = input.float(96.0, "V50 score LONG NY A++", minval=85, maxval=100, step=1, group=grpFilters)
+macroNewsBlock = input.bool(false, "Macro/news block manuale", group=grpFilters)
+grpRisk = "06. Risk management"
+riskProfile = input.string("Growth", "Profilo rendimento", options=["Conservative", "Balanced", "Growth", "Aggressive"], group=grpRisk)
+accountSize = input.float(1000, "Capitale conto", minval=0, step=100, group=grpRisk)
+riskPct = input.float(1.00, "Rischio per trade (%)", minval=0.01, maxval=10, step=0.05, group=grpRisk)
+usdPerPointPerLot = input.float(100.0, "USD per movimento 1.00 / lotto", minval=0.01, step=1, group=grpRisk)
+useFixedBacktestQty = input.bool(true, "Backtest con qty fissa", group=grpRisk)
+backtestQty = input.float(1.0, "Qty backtest", minval=0.001, step=0.001, group=grpRisk)
+pipValue = input.float(0.10, "Valore pip in prezzo", minval=0.001, step=0.001, group=grpRisk)
+slMinPips = input.int(130, "Stop minimo (pips)", minval=10, group=grpRisk)
+slMaxPips = input.int(180, "Stop massimo (pips)", minval=10, group=grpRisk)
+allowStructureStopStretch = input.bool(false, "Permetti SL oltre max su struttura", group=grpRisk)
+structureStopMaxPips = input.int(260, "Stop struttura massimo (pips)", minval=20, maxval=500, group=grpRisk)
+rrTp1 = input.float(1.0, "RR TP1", minval=0.5, maxval=2.0, step=0.1, group=grpRisk)
+rrTp2 = input.float(2.0, "RR TP2", minval=1.0, maxval=4.0, step=0.1, group=grpRisk)
+rrTp3 = input.float(3.0, "RR TP3", minval=1.5, maxval=6.0, step=0.1, group=grpRisk)
+stopBufferAtr = input.float(0.12, "Buffer SL oltre swing (ATR)", minval=0.0, maxval=1.0, step=0.01, group=grpRisk)
+unconfirmedSwingLookback = input.int(10, "Swing recente per SL", minval=3, maxval=50, group=grpRisk)
+useQualityQtyBoost = input.bool(true, "Boost size solo A+ V50", group=grpRisk)
+aQtyMult = input.float(1.10, "Moltiplicatore size A", minval=1.0, maxval=3.0, step=0.05, group=grpRisk)
+aPlusQtyMult = input.float(1.25, "Moltiplicatore size A+", minval=1.0, maxval=4.0, step=0.05, group=grpRisk)
+longQtyFactor = input.float(0.75, "Fattore size LONG", minval=0.10, maxval=2.0, step=0.05, group=grpRisk)
+shortQtyFactor = input.float(1.00, "Fattore size SHORT", minval=0.10, maxval=2.0, step=0.05, group=grpRisk)
+headlineQtyMult = input.float(0.60, "Size in headline high", minval=0.10, maxval=1.0, step=0.05, group=grpRisk)
+decoupledQtyMult = input.float(0.80, "Size in decoupled", minval=0.10, maxval=1.0, step=0.05, group=grpRisk)
+moveStopToBEAfterTP1 = input.bool(true, "Proteggi a BE dopo TP1", group=grpRisk)
+beBufferPips = input.int(5, "Buffer BE (pips)", minval=0, maxval=50, group=grpRisk)
+useDynamicInvalidation = input.bool(true, "Chiudi setup se invalidato", group=grpRisk)
+invalidateGap = input.float(10.0, "Gap invalidazione score", minval=2, maxval=40, step=1, group=grpRisk)
+invalidMinBars = input.int(4, "Barre minime prima di invalidare", minval=1, maxval=20, group=grpRisk)
+invalidConfirmBars = input.int(2, "Conferme invalidazione", minval=1, maxval=5, group=grpRisk)
+invalidAdverseAtr = input.float(0.12, "Perdita minima invalidazione (ATR)", minval=0.0, maxval=1.0, step=0.01, group=grpRisk)
+sniperCooldown = input.int(8, "Cooldown Sniper (barre)", minval=0, group=grpRisk)
+lossCooldownBars = input.int(24, "Cooldown dopo loss stessa direzione", minval=0, maxval=200, group=grpRisk)
+sniperMaxBars = input.int(32, "Durata massima Sniper (barre)", minval=1, group=grpRisk)
+forceIntradayFlat = input.bool(true, "Chiudi tutto intraday", group=grpRisk)
+flatSession = input.session("2245-2300", "Finestra flat intraday", group=grpRisk)
+clearClosedAfter = input.int(6, "Pulisci setup chiuso dopo barre", minval=0, group=grpRisk)
+grpVisual = "07. Visual"
+showDashboard = input.bool(false, "Mostra dashboard", group=grpVisual)
+showTradePlan = input.bool(false, "Disegna Entry / SL / TP", group=grpVisual)
+showSignalMarker = input.bool(false, "Mostra marker segnale", group=grpVisual)
+keepHistory = input.bool(false, "Mantieni vecchi trade plan completi", group=grpVisual)
+showCompactHistory = input.bool(false, "Storico sintetico segnali chiusi", group=grpVisual)
+historyDays = input.int(2, "Giorni storico sintetico", minval=1, maxval=10, group=grpVisual)
+maxHistoryTrades = input.int(120, "Max trade storici sintetici", minval=10, maxval=180, group=grpVisual)
+projectionBars = input.int(24, "Estensione linee", minval=5, maxval=200, group=grpVisual)
+showBackgroundBias = input.bool(false, "Sfondo bias MTF", group=grpVisual)
+showStructure = input.bool(false, "Mostra BOS / CHOCH", group=grpVisual)
+structureDetail = input.string("Segnali", "Dettaglio struttura", options=["Segnali", "Pulito", "Completo", "Off"], group=grpVisual)
+showVwapPoc = input.bool(false, "Mostra VWAP / POC", group=grpVisual)
+showSlRecoveryAudit = input.bool(false, "Audit recupero dopo SL", group=grpVisual)
+slRecoveryBars = input.int(16, "Barre audit recupero SL", minval=3, maxval=80, group=grpVisual)
+pocDisplay = input.string("Smooth", "Stile POC", options=["Smooth", "Raw", "Off"], group=grpVisual)
+pocSmoothLen = input.int(8, "Smussatura POC", minval=1, maxval=50, group=grpVisual)
+pocTransparency = input.int(86, "Trasparenza POC", minval=0, maxval=100, group=grpVisual)
+vwapTransparency = input.int(50, "Trasparenza VWAP", minval=0, maxval=100, group=grpVisual)
+maxStructureLabels = input.int(30, "Max label struttura", minval=5, maxval=80, group=grpVisual)
+grpInter = "08. Proxy fondamentali"
+dxySymbol = input.symbol("TVC:DXY", "Dollar Index proxy", group=grpInter)
+us10ySymbol = input.symbol("TVC:US10Y", "US 10Y yield proxy", group=grpInter)
+grpRound = "09. Round levels"
+showRoundLevels = input.bool(false, "Mostra livelli round", group=grpRound)
+roundStepPips = input.int(50, "Step round level (pips)", minval=10, maxval=500, group=grpRound)
+roundDangerPips = input.int(18, "Distanza rischio round (pips)", minval=1, maxval=100, group=grpRound)
+roundTransparency = input.int(86, "Trasparenza round", minval=0, maxval=100, group=grpRound)
+useRoundFilter = input.bool(false, "Filtra ingressi contro round vicino", group=grpRound)
+grpPlaybook = "10. Setup playbook"
+enableTrendContinuation = input.bool(false, "Abilita trend continuation", group=grpPlaybook)
+continuationScoreMin = input.float(84.0, "Score minimo continuation", minval=55, maxval=95, step=1, group=grpPlaybook)
+continuationLtfMin = input.int(3, "Conferme LTF continuation", minval=1, maxval=3, group=grpPlaybook)
+continuationAdxMin = input.float(22.0, "ADX minimo continuation", minval=8, maxval=50, step=0.5, group=grpPlaybook)
+continuationPullbackAtr = input.float(0.55, "Pullback max da EMA/VWAP (ATR)", minval=0.05, maxval=2.0, step=0.05, group=grpPlaybook)
+allowContinuationTimeOverride = input.bool(false, "Continuation puo superare time guard", group=grpPlaybook)
+continuationOverrideScore = input.float(90.0, "Score override continuation", minval=65, maxval=99, step=1, group=grpPlaybook)
+enableRangeScalp = input.bool(false, "Abilita range scalp", group=grpPlaybook)
+rangeScoreMin = input.float(80.0, "Score minimo range scalp", minval=55, maxval=90, step=1, group=grpPlaybook)
+rangeMaxAdx = input.float(15.0, "ADX massimo range scalp", minval=8, maxval=35, step=0.5, group=grpPlaybook)
+baseSymbol = useChartSymbol ? syminfo.tickerid : customSymbol
+isSniper = true
+htfOffset = useClosedHTF ? 1 : 0
+f_wpr(_len) =>
+    float hh = ta.highest(high, _len)
+    float ll = ta.lowest(low, _len)
+    -100.0 * (hh - close) / math.max(hh - ll, syminfo.mintick)
+f_pack(int _offset) =>
+    float ema21 = ta.ema(close, 21)
+    float ema50 = ta.ema(close, 50)
+    float ema200 = ta.ema(close, 200)
+    float ema50Slope = ema50 - ema50[3]
+    float rsi = ta.rsi(close, lenRsi)
+    float wpr = f_wpr(lenWpr)
+    [plusDi, minusDi, adx] = ta.dmi(lenAdx, lenAdx)
+    float atr = ta.atr(lenAtr)
+    float volBase = math.max(ta.sma(volume, 20), 1.0)
+    float volRatio = volume / volBase
+    [close[_offset], ema21[_offset], ema50[_offset], ema200[_offset], ema50Slope[_offset], rsi[_offset], wpr[_offset], plusDi[_offset], minusDi[_offset], adx[_offset], atr[_offset], volRatio[_offset]]
+f_intermarket_pack(int _offset) =>
+    float ema20 = ta.ema(close, 20)
+    float ema50 = ta.ema(close, 50)
+    float slope20 = ema20 - ema20[3]
+    [close[_offset], ema20[_offset], ema50[_offset], slope20[_offset]]
+f_poc(int _lookback, int _bins) =>
+    float hi = ta.highest(high, _lookback)
+    float lo = ta.lowest(low, _lookback)
+    float span = hi - lo
+    float poc = na
+    if span > syminfo.mintick
+        float step = span / _bins
+        array<float> buckets = array.new_float(_bins, 0.0)
+        for b = 0 to _lookback - 1
+            float price = hlc3[b]
+            if not na(price)
+                int idx = int(math.floor((price - lo) / step))
+                idx := math.max(0, math.min(_bins - 1, idx))
+                array.set(buckets, idx, array.get(buckets, idx) + nz(volume[b], 1.0))
+        float maxVol = -1.0
+        int maxIdx = 0
+        for i = 0 to _bins - 1
+            float v = array.get(buckets, i)
+            if v > maxVol
+                maxVol := v
+                maxIdx := i
+        poc := lo + step * (maxIdx + 0.5)
+    poc
+f_nearest_above(array<float> _levels, float _price) =>
+    float best = na
+    int n = array.size(_levels)
+    if n > 0
+        for i = 0 to n - 1
+            float lvl = array.get(_levels, i)
+            if lvl > _price and (na(best) or lvl < best)
+                best := lvl
+    best
+f_nearest_below(array<float> _levels, float _price) =>
+    float best = na
+    int n = array.size(_levels)
+    if n > 0
+        for i = 0 to n - 1
+            float lvl = array.get(_levels, i)
+            if lvl < _price and (na(best) or lvl > best)
+                best := lvl
+    best
+f_price(float _value) =>
+    str.tostring(_value, format.mintick)
+f_bool(bool _value) =>
+    _value ? "OK" : "--"
+f_bg(bool _value, color _color) =>
+    _value ? color.new(_color, 76) : color.new(color.gray, 90)
+f_grade(float _score) =>
+    _score >= 88 ? "A+" : _score >= 80 ? "A" : _score >= 72 ? "B+" : _score >= 64 ? "B" : _score >= 55 ? "C" : "LOW"
+f_pct(float _score) =>
+    str.tostring(math.round(_score)) + "%"
+f_num(float _value) =>
+    na(_value) ? "--" : str.tostring(_value, "#.#")
+f_risk_mult(float _score) =>
+    _score >= 90 ? 1.0 : _score >= 85 ? 0.85 : _score >= sniperScoreMin ? 0.65 : _score >= sniperReversalMin ? 0.45 : _score >= continuationScoreMin ? 0.40 : _score >= rangeScoreMin ? 0.30 : 0.0
+f_profile_mult(float _score) =>
+    riskProfile == "Conservative" ? 0.75 : riskProfile == "Growth" ? (_score >= 88 ? 1.25 : 1.0) : riskProfile == "Aggressive" ? (_score >= 90 ? 1.60 : 1.15) : 1.0
+f_qty_mult(float _score, bool _trendAligned, bool _interStrong) =>
+    not useQualityQtyBoost ? 1.0 : _score >= 92 and _trendAligned and _interStrong ? aPlusQtyMult : _score >= 88 and _trendAligned and _interStrong ? aQtyMult : 1.0
+[c4, e21_4, e50_4, e200_4, slope50_4, rsi4, wpr4, pdi4, mdi4, adx4, atr4, vr4] = request.security(baseSymbol, tf4h, f_pack(htfOffset), lookahead=barmerge.lookahead_off)
+[c1, e21_1, e50_1, e200_1, slope50_1, rsi1, wpr1, pdi1, mdi1, adx1, atr1, vr1] = request.security(baseSymbol, tf1h, f_pack(htfOffset), lookahead=barmerge.lookahead_off)
+[c15, e21_15, e50_15, e200_15, slope50_15, rsi15, wpr15, pdi15, mdi15, adx15, atr15, vr15] = request.security(baseSymbol, tf15, f_pack(htfOffset), lookahead=barmerge.lookahead_off)
+[c10, e21_10, e50_10, e200_10, slope50_10, rsi10, wpr10, pdi10, mdi10, adx10, atr10, vr10] = request.security(baseSymbol, tf10, f_pack(htfOffset), lookahead=barmerge.lookahead_off)
+[c5, e21_5, e50_5, e200_5, slope50_5, rsi5, wpr5, pdi5, mdi5, adx5, atr5, vr5] = request.security(baseSymbol, tf5, f_pack(htfOffset), lookahead=barmerge.lookahead_off)
+[dxyClose, dxyE20, dxyE50, dxySlope] = request.security(dxySymbol, tfIntermarket, f_intermarket_pack(htfOffset), lookahead=barmerge.lookahead_off)
+[yClose, yE20, yE50, ySlope] = request.security(us10ySymbol, tfIntermarket, f_intermarket_pack(htfOffset), lookahead=barmerge.lookahead_off)
+ema21Local = ta.ema(close, 21)
+ema50Local = ta.ema(close, 50)
+ema200Local = ta.ema(close, 200)
+rsiLocal = ta.rsi(close, lenRsi)
+wprLocal = f_wpr(lenWpr)
+[pdiLocal, mdiLocal, adxLocal] = ta.dmi(lenAdx, lenAdx)
+atrLocal = ta.atr(lenAtr)
+volRatioLocal = volume / math.max(ta.sma(volume, 20), 1.0)
+vwapLocal = ta.vwap(hlc3)
+pocLocal = f_poc(pocLookback, pocBins)
+pocSmooth = ta.ema(pocLocal, pocSmoothLen)
+pocVisual = pocDisplay == "Smooth" ? pocSmooth : pocLocal
+pocZone = atrLocal * pocAtrZone
+nearPoc = not na(pocLocal) and math.abs(close - pocLocal) <= pocZone
+aboveValue = (na(vwapLocal) or close >= vwapLocal) and (na(pocLocal) or close >= pocLocal or not nearPoc)
+belowValue = (na(vwapLocal) or close <= vwapLocal) and (na(pocLocal) or close <= pocLocal or not nearPoc)
+roundStep = math.max(roundStepPips * pipValue, syminfo.mintick)
+roundZone = math.max(roundDangerPips * pipValue, syminfo.mintick)
+roundAbove = math.ceil(close / roundStep) * roundStep
+roundBelow = math.floor(close / roundStep) * roundStep
+roundNearest = math.abs(close - roundBelow) <= math.abs(roundAbove - close) ? roundBelow : roundAbove
+roundRiskLong = roundAbove > close and roundAbove - close <= roundZone
+roundRiskShort = roundBelow < close and close - roundBelow <= roundZone
+roundOkLong = not useRoundFilter or not roundRiskLong
+roundOkShort = not useRoundFilter or not roundRiskShort
+recentLowStop = ta.lowest(low, unconfirmedSwingLookback)
+recentHighStop = ta.highest(high, unconfirmedSwingLookback)
+var array<float> swingHighs = array.new_float()
+var array<float> swingLows = array.new_float()
+maxStoredLevels = 40
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+if not na(ph)
+    array.unshift(swingHighs, ph)
+    if array.size(swingHighs) > maxStoredLevels
+        array.pop(swingHighs)
+if not na(pl)
+    array.unshift(swingLows, pl)
+    if array.size(swingLows) > maxStoredLevels
+        array.pop(swingLows)
+lastSwingHigh = array.size(swingHighs) > 0 ? array.get(swingHighs, 0) : na
+lastSwingLow = array.size(swingLows) > 0 ? array.get(swingLows, 0) : na
+var int structureDir = 0
+bodyLocal = math.abs(close - open)
+breakBuffer = atrLocal * breakoutAtrBuffer
+breakDisplacementOk = bodyLocal >= atrLocal * minBreakBodyAtr and volRatioLocal >= breakoutVolRatio and adxLocal >= minAdxActive
+rawBosLong = not na(lastSwingHigh) and close > lastSwingHigh and close[1] <= lastSwingHigh
+rawBosShort = not na(lastSwingLow) and close < lastSwingLow and close[1] >= lastSwingLow
+bosLong = rawBosLong and (not useBreakoutRetestFilter or (close > lastSwingHigh + breakBuffer and breakDisplacementOk))
+bosShort = rawBosShort and (not useBreakoutRetestFilter or (close < lastSwingLow - breakBuffer and breakDisplacementOk))
+weakBosLong = rawBosLong and not bosLong
+weakBosShort = rawBosShort and not bosShort
+chochLong = bosLong and structureDir == -1
+chochShort = bosShort and structureDir == 1
+if bosLong
+    structureDir := 1
+if bosShort
+    structureDir := -1
+sweepLong = not na(lastSwingLow) and low < lastSwingLow and close > lastSwingLow and close > open
+sweepShort = not na(lastSwingHigh) and high > lastSwingHigh and close < lastSwingHigh and close < open
+var float lastBullBreakLevel = na
+var float lastBearBreakLevel = na
+var int lastBullBreakBar = na
+var int lastBearBreakBar = na
+if bosLong
+    lastBullBreakLevel := lastSwingHigh
+    lastBullBreakBar := bar_index
+if bosShort
+    lastBearBreakLevel := lastSwingLow
+    lastBearBreakBar := bar_index
+retestLong = useBreakoutRetestFilter and not na(lastBullBreakLevel) and not na(lastBullBreakBar) and bar_index > lastBullBreakBar and bar_index - lastBullBreakBar <= retestLookback and low <= lastBullBreakLevel + atrLocal * retestToleranceAtr and close > lastBullBreakLevel and close > open
+retestShort = useBreakoutRetestFilter and not na(lastBearBreakLevel) and not na(lastBearBreakBar) and bar_index > lastBearBreakBar and bar_index - lastBearBreakBar <= retestLookback and high >= lastBearBreakLevel - atrLocal * retestToleranceAtr and close < lastBearBreakLevel and close < open
+retestLongClean = retestLong and close > lastBullBreakLevel + atrLocal * retestConfirmAtr and bodyLocal >= atrLocal * minBreakBodyAtr * 0.65
+retestShortClean = retestShort and close < lastBearBreakLevel - atrLocal * retestConfirmAtr and bodyLocal >= atrLocal * minBreakBodyAtr * 0.65
+firstBreakLongOk = allowFirstBreakoutEntry and bosLong and breakDisplacementOk
+firstBreakShortOk = allowFirstBreakoutEntry and bosShort and breakDisplacementOk
+bullShift = bosLong or chochLong or sweepLong or retestLongClean
+bearShift = bosShort or chochShort or sweepShort or retestShortClean
+barsSinceBullShift = nz(ta.barssince(bullShift), 10000)
+barsSinceBearShift = nz(ta.barssince(bearShift), 10000)
+recentBullShift = barsSinceBullShift <= chochLookback
+recentBearShift = barsSinceBearShift <= chochLookback
+pullbackLong = close > ema50Local and low <= ema21Local and close > ema21Local and close > open
+pullbackShort = close < ema50Local and high >= ema21Local and close < ema21Local and close < open
+wprCrossLong = ta.crossover(wprLocal, -80)
+rsiCrossLong = ta.crossover(rsiLocal, 50)
+wprCrossShort = ta.crossunder(wprLocal, -20)
+rsiCrossShort = ta.crossunder(rsiLocal, 50)
+momentumCrossLong = wprCrossLong or rsiCrossLong
+momentumCrossShort = wprCrossShort or rsiCrossShort
+trend4Long = c4 > e200_4 and e50_4 > e200_4 and slope50_4 > 0
+trend4Short = c4 < e200_4 and e50_4 < e200_4 and slope50_4 < 0
+soft4Long = c4 > e50_4 and rsi4 > 48
+soft4Short = c4 < e50_4 and rsi4 < 52
+mom1Long = c1 > e50_1 and pdi1 > mdi1 and adx1 >= minAdxActive and rsi1 > 52
+mom1Short = c1 < e50_1 and mdi1 > pdi1 and adx1 >= minAdxActive and rsi1 < 48
+strong1Long = mom1Long and adx1 >= minAdxSniper and c1 > e200_1
+strong1Short = mom1Short and adx1 >= minAdxSniper and c1 < e200_1
+struct15Long = c15 > e200_15 and e21_15 > e50_15 and rsi15 > 50
+struct15Short = c15 < e200_15 and e21_15 < e50_15 and rsi15 < 50
+trigger10Long = c10 > e21_10 and e21_10 > e50_10 and pdi10 > mdi10 and wpr10 > -65
+trigger10Short = c10 < e21_10 and e21_10 < e50_10 and mdi10 > pdi10 and wpr10 < -35
+trigger5Long = c5 > e21_5 and pdi5 > mdi5 and wpr5 > -60
+trigger5Short = c5 < e21_5 and mdi5 > pdi5 and wpr5 < -40
+dxyBearish = dxyClose < dxyE50 and dxySlope < 0
+dxyBullish = dxyClose > dxyE50 and dxySlope > 0
+yieldBearish = yClose < yE50 and ySlope < 0
+yieldBullish = yClose > yE50 and ySlope > 0
+interLongCount = (dxyBearish ? 1 : 0) + (yieldBearish ? 1 : 0)
+interShortCount = (dxyBullish ? 1 : 0) + (yieldBullish ? 1 : 0)
+interLongOk = interLongCount >= 1
+interShortOk = interShortCount >= 1
+interLongStrong = interLongCount == 2
+interShortStrong = interShortCount == 2
+atrRegimeBase = ta.sma(atrLocal, 50)
+atrRegimeRatio = na(atrRegimeBase) or atrRegimeBase <= 0 ? 1.0 : atrLocal / atrRegimeBase
+shockCandle = (high - low) >= atrLocal * shockCandleAtr or math.abs(close - open) >= atrLocal * shockCandleAtr * 0.65
+goldUpRegime = not na(close[decoupleLookback]) and close - close[decoupleLookback] >= atrLocal * 1.0
+goldDownRegime = not na(close[decoupleLookback]) and close[decoupleLookback] - close >= atrLocal * 1.0
+dxyUpRegime = not na(dxyClose[decoupleLookback]) and dxyClose > dxyClose[decoupleLookback]
+dxyDownRegime = not na(dxyClose[decoupleLookback]) and dxyClose < dxyClose[decoupleLookback]
+yieldUpRegime = not na(yClose[decoupleLookback]) and yClose > yClose[decoupleLookback]
+yieldDownRegime = not na(yClose[decoupleLookback]) and yClose < yClose[decoupleLookback]
+autoShockRegime = atrRegimeRatio >= shockAtrRatio or shockCandle or macroNewsBlock
+autoDecoupledRegime = (goldUpRegime and not (dxyDownRegime or yieldDownRegime)) or (goldDownRegime and not (dxyUpRegime or yieldUpRegime))
+autoTrendDayLong = close > ema50Local and ema21Local > ema50Local and pdiLocal > mdiLocal and adxLocal >= trendDayAdx and atrRegimeRatio >= trendDayAtrRatio
+autoTrendDayShort = close < ema50Local and ema21Local < ema50Local and mdiLocal > pdiLocal and adxLocal >= trendDayAdx and atrRegimeRatio >= trendDayAtrRatio
+headlineHighMode = headlineRisk == "Alto" or regimeMode == "Headline High"
+shockMode = headlineHighMode or (regimeMode == "Auto" and headlineRisk != "Basso" and autoShockRegime)
+decoupledMode = regimeMode == "Decoupled" or (regimeMode == "Auto" and autoDecoupledRegime and not shockMode)
+trendDayMode = regimeMode == "Trend Day" or (regimeMode == "Auto" and (autoTrendDayLong or autoTrendDayShort) and not shockMode)
+regimeScoreExtra = shockMode ? headlineExtraScore : decoupledMode ? decoupledExtraScore : 0.0
+regimeQtyMult = shockMode ? headlineQtyMult : decoupledMode ? decoupledQtyMult : 1.0
+regimeText = shockMode ? "HEADLINE" : decoupledMode ? "DECOUPLED" : trendDayMode ? autoTrendDayLong ? "TREND L" : autoTrendDayShort ? "TREND S" : "TREND" : "NORMAL"
+sessAsia = not na(time(timeframe.period, "0000-1000", sessionTimezone))
+sessLondon = not na(time(timeframe.period, "0900-1730", sessionTimezone))
+sessUS = not na(time(timeframe.period, "1600-2300", sessionTimezone))
+sessClosed = not na(time(timeframe.period, "2300-0000", sessionTimezone))
+flatNow = forceIntradayFlat and not na(time(timeframe.period, flatSession, sessionTimezone))
+sessEarlyAsiaWeak = useSessionQualityGuard and avoidEarlyAsia and not na(time(timeframe.period, avoidEarlyAsiaSession, sessionTimezone))
+sessMidLondonChop = useSessionQualityGuard and avoidMidLondon and not na(time(timeframe.period, avoidMidLondonSession, sessionTimezone))
+sessLondonFix = useSessionQualityGuard and avoidLondonFix and not na(time(timeframe.period, avoidLondonFixSession, sessionTimezone))
+nyLongTrapWindow = useSessionQualityGuard and useNyLongTrapGuard and not na(time(timeframe.period, nyLongTrapSession, sessionTimezone))
+nyLateLongBlockWindow = useSessionQualityGuard and useNyLateLongBlock and not na(time(timeframe.period, nyLateLongBlockSession, sessionTimezone))
+sessionName = sessClosed ? "FX CLOSED" : sessLondon and sessUS ? "LONDON/US" : sessAsia and sessLondon ? "ASIA/LONDON" : sessAsia ? "ASIA" : sessLondon ? "LONDON" : sessUS ? "NEW YORK" : "OFF"
+pureLondon = sessLondon and not sessUS and not sessAsia
+inSession = not useSessionFilter or (not sessClosed and not flatNow and (sessAsia or sessLondon or sessUS))
+volumeOk = not useVolumeFilter or volRatioLocal >= minVolRatio
+tradeAllowed = inSession and volumeOk and not macroNewsBlock
+longMtfCount = (soft4Long ? 1 : 0) + (mom1Long ? 1 : 0) + (struct15Long ? 1 : 0) + (trigger10Long ? 1 : 0) + (trigger5Long ? 1 : 0)
+shortMtfCount = (soft4Short ? 1 : 0) + (mom1Short ? 1 : 0) + (struct15Short ? 1 : 0) + (trigger10Short ? 1 : 0) + (trigger5Short ? 1 : 0)
+ltfLongCount = (struct15Long ? 1 : 0) + (trigger10Long ? 1 : 0) + (trigger5Long ? 1 : 0)
+ltfShortCount = (struct15Short ? 1 : 0) + (trigger10Short ? 1 : 0) + (trigger5Short ? 1 : 0)
+extensionLimit = maxExtensionAtrSniper
+valueLongOk = not useVwapPocFilter or aboveValue or sweepLong or chochLong or retestLongClean or firstBreakLongOk
+valueShortOk = not useVwapPocFilter or belowValue or sweepShort or chochShort or retestShortClean or firstBreakShortOk
+vwapPocCompressed = useAdaptiveQuality and useVwapPocFilter and not na(vwapLocal) and not na(pocLocal) and math.abs(vwapLocal - pocLocal) <= atrLocal * compressionAtrZone
+compressionChop = vwapPocCompressed and nearPoc and adxLocal < londonMinAdx and not breakDisplacementOk
+chopBlock = useVwapPocFilter and ((nearPoc and adxLocal < minAdxActive + 2) or compressionChop)
+longChaseBlock = useAntiChaseFilter and close > ema50Local + atrLocal * extensionLimit and not pullbackLong and not sweepLong and not chochLong and not retestLongClean
+shortChaseBlock = useAntiChaseFilter and close < ema50Local - atrLocal * extensionLimit and not pullbackShort and not sweepShort and not chochShort and not retestShortClean
+rsiExhaustLong = useAntiChaseFilter and rsiLocal > 70 and close > ema21Local + atrLocal * 0.80 and not pullbackLong
+rsiExhaustShort = useAntiChaseFilter and rsiLocal < 30 and close < ema21Local - atrLocal * 0.80 and not pullbackShort
+impulseLow = ta.lowest(low, lateImpulseLookback)
+impulseHigh = ta.highest(high, lateImpulseLookback)
+impulseRange = impulseHigh - impulseLow
+barsFromImpulseHigh = ta.highestbars(high, lateImpulseLookback)
+barsFromImpulseLow = ta.lowestbars(low, lateImpulseLookback)
+recentTopRejection = math.abs(barsFromImpulseHigh) <= postImpulseTopBars and impulseHigh - close >= atrLocal * postImpulseRejectAtr and close < high[1]
+recentBottomRejection = math.abs(barsFromImpulseLow) <= postImpulseTopBars and close - impulseLow >= atrLocal * postImpulseRejectAtr and close > low[1]
+lateLongExtension = close - impulseLow >= atrLocal * lateImpulseAtrMin and close > ema50Local + atrLocal * lateImpulseExtensionAtr and (rsiLocal >= lateImpulseRsi or wprLocal > -18)
+lateShortExtension = impulseHigh - close >= atrLocal * lateImpulseAtrMin and close < ema50Local - atrLocal * lateImpulseExtensionAtr and (rsiLocal <= 100.0 - lateImpulseRsi or wprLocal < -82)
+postImpulseLongTrap = useLateImpulseGuard and impulseRange >= atrLocal * lateImpulseAtrMin and recentTopRejection and close > ema50Local and not pullbackLong and not retestLongClean
+postImpulseShortTrap = applyLateGuardShort and impulseRange >= atrLocal * lateImpulseAtrMin and recentBottomRejection and close < ema50Local and not pullbackShort and not retestShortClean
+lateLongImpulse = useLateImpulseGuard and (lateLongExtension or postImpulseLongTrap) and not pullbackLong and not retestLongClean
+lateShortImpulse = applyLateGuardShort and (lateShortExtension or postImpulseShortTrap) and not pullbackShort and not retestShortClean
+qualityLongOk = valueLongOk and not chopBlock and not longChaseBlock and not rsiExhaustLong and not lateLongImpulse and not weakBosLong and roundOkLong
+qualityShortOk = valueShortOk and not chopBlock and not shortChaseBlock and not rsiExhaustShort and not lateShortImpulse and not weakBosShort and roundOkShort
+headlineLongOk = not shockMode or ((sweepLong or retestLongClean or chochLong) and close > ema21Local and pdiLocal > mdiLocal and not weakBosLong and not lateLongImpulse)
+headlineShortOk = not shockMode or ((sweepShort or retestShortClean or chochShort) and close < ema21Local and mdiLocal > pdiLocal and not weakBosShort and not lateShortImpulse)
+float scoreLong = 0.0
+float scoreShort = 0.0
+scoreLong += trend4Long ? 22 : soft4Long ? 11 : 0
+scoreShort += trend4Short ? 22 : soft4Short ? 11 : 0
+scoreLong += strong1Long ? 20 : mom1Long ? 14 : 0
+scoreShort += strong1Short ? 20 : mom1Short ? 14 : 0
+scoreLong += struct15Long ? 18 : c15 > e50_15 ? 9 : 0
+scoreShort += struct15Short ? 18 : c15 < e50_15 ? 9 : 0
+scoreLong += trigger10Long ? 12 : 0
+scoreShort += trigger10Short ? 12 : 0
+scoreLong += trigger5Long ? 10 : 0
+scoreShort += trigger5Short ? 10 : 0
+scoreLong += interLongStrong ? 10 : interLongOk ? 5 : 0
+scoreShort += interShortStrong ? 10 : interShortOk ? 5 : 0
+scoreLong += retestLongClean ? 9 : sweepLong ? 7 : firstBreakLongOk ? 4 : 0
+scoreShort += retestShortClean ? 9 : sweepShort ? 7 : firstBreakShortOk ? 4 : 0
+scoreLong += aboveValue ? 6 : 0
+scoreShort += belowValue ? 6 : 0
+scoreLong += close > ema21Local and close > ema50Local ? 4 : 0
+scoreShort += close < ema21Local and close < ema50Local ? 4 : 0
+scoreLong += inSession ? 5 : 0
+scoreShort += inSession ? 5 : 0
+scoreLong += volumeOk ? 3 : 0
+scoreShort += volumeOk ? 3 : 0
+scoreLong += longChaseBlock ? -10 : 0
+scoreShort += shortChaseBlock ? -10 : 0
+scoreLong += lateLongImpulse ? -16 : 0
+scoreShort += lateShortImpulse ? -16 : 0
+scoreLong += chopBlock ? -8 : 0
+scoreShort += chopBlock ? -8 : 0
+scoreLong += weakBosLong ? -12 : 0
+scoreShort += weakBosShort ? -12 : 0
+scoreLong += useRoundFilter and roundRiskLong ? -8 : 0
+scoreShort += useRoundFilter and roundRiskShort ? -8 : 0
+scoreLong := math.max(0.0, math.min(100.0, scoreLong))
+scoreShort := math.max(0.0, math.min(100.0, scoreShort))
+contPullbackLong = low <= ema21Local + atrLocal * continuationPullbackAtr or (not na(vwapLocal) and low <= vwapLocal + atrLocal * continuationPullbackAtr) or (not na(pocLocal) and low <= pocLocal + atrLocal * continuationPullbackAtr)
+contPullbackShort = high >= ema21Local - atrLocal * continuationPullbackAtr or (not na(vwapLocal) and high >= vwapLocal - atrLocal * continuationPullbackAtr) or (not na(pocLocal) and high >= pocLocal - atrLocal * continuationPullbackAtr)
+trendContinuationLongBase = enableTrendContinuation and close > ema50Local and ema21Local > ema50Local and pdiLocal > mdiLocal and adxLocal >= continuationAdxMin and ltfLongCount >= continuationLtfMin and (mom1Long or strong1Long or struct15Long)
+trendContinuationShortBase = enableTrendContinuation and close < ema50Local and ema21Local < ema50Local and mdiLocal > pdiLocal and adxLocal >= continuationAdxMin and ltfShortCount >= continuationLtfMin and (mom1Short or strong1Short or struct15Short)
+continuationTriggerLong = trendContinuationLongBase and contPullbackLong and close > ema21Local and close > open and (trigger5Long or momentumCrossLong or close > high[1])
+continuationTriggerShort = trendContinuationShortBase and contPullbackShort and close < ema21Local and close < open and (trigger5Short or momentumCrossShort or close < low[1])
+continuationQualityLong = not compressionChop and not weakBosLong and not rsiExhaustLong and not lateLongImpulse and roundOkLong and not (useAntiChaseFilter and close > ema50Local + atrLocal * (extensionLimit + 1.20) and not contPullbackLong)
+continuationQualityShort = not compressionChop and not weakBosShort and not rsiExhaustShort and not lateShortImpulse and roundOkShort and not (useAntiChaseFilter and close < ema50Local - atrLocal * (extensionLimit + 1.20) and not contPullbackShort)
+float continuationLongScore = 0.0
+float continuationShortScore = 0.0
+continuationLongScore += trend4Long ? 18 : soft4Long ? 10 : 0
+continuationShortScore += trend4Short ? 18 : soft4Short ? 10 : 0
+continuationLongScore += strong1Long ? 18 : mom1Long ? 12 : 0
+continuationShortScore += strong1Short ? 18 : mom1Short ? 12 : 0
+continuationLongScore += struct15Long ? 14 : 0
+continuationShortScore += struct15Short ? 14 : 0
+continuationLongScore += trigger10Long ? 8 : 0
+continuationShortScore += trigger10Short ? 8 : 0
+continuationLongScore += trigger5Long ? 8 : 0
+continuationShortScore += trigger5Short ? 8 : 0
+continuationLongScore += trendContinuationLongBase ? 14 : 0
+continuationShortScore += trendContinuationShortBase ? 14 : 0
+continuationLongScore += contPullbackLong ? 10 : 0
+continuationShortScore += contPullbackShort ? 10 : 0
+continuationLongScore += continuationTriggerLong ? 9 : 0
+continuationShortScore += continuationTriggerShort ? 9 : 0
+continuationLongScore += interLongStrong ? 8 : interLongOk ? 4 : 0
+continuationShortScore += interShortStrong ? 8 : interShortOk ? 4 : 0
+continuationLongScore += inSession ? 5 : 0
+continuationShortScore += inSession ? 5 : 0
+continuationLongScore += volumeOk ? 2 : 0
+continuationShortScore += volumeOk ? 2 : 0
+continuationLongScore += continuationQualityLong ? 5 : -12
+continuationShortScore += continuationQualityShort ? 5 : -12
+continuationLongScore += chopBlock ? -10 : 0
+continuationShortScore += chopBlock ? -10 : 0
+continuationLongScore := math.max(0.0, math.min(100.0, continuationLongScore))
+continuationShortScore := math.max(0.0, math.min(100.0, continuationShortScore))
+rangeMarket = enableRangeScalp and nearPoc and adxLocal <= rangeMaxAdx and not breakDisplacementOk and not trendContinuationLongBase and not trendContinuationShortBase and not compressionChop
+rangeLongTrigger = rangeMarket and sweepLong and close > open and (wprLocal < -70 or rsiLocal < 42) and (na(vwapLocal) or close >= vwapLocal or close > ema21Local)
+rangeShortTrigger = rangeMarket and sweepShort and close < open and (wprLocal > -30 or rsiLocal > 58) and (na(vwapLocal) or close <= vwapLocal or close < ema21Local)
+rangeQualityLong = roundOkLong and not rsiExhaustLong and not lateLongImpulse and volumeOk and not weakBosLong
+rangeQualityShort = roundOkShort and not rsiExhaustShort and not lateShortImpulse and volumeOk and not weakBosShort
+float rangeLongScore = 0.0
+float rangeShortScore = 0.0
+rangeLongScore += rangeMarket ? 20 : 0
+rangeShortScore += rangeMarket ? 20 : 0
+rangeLongScore += sweepLong ? 22 : 0
+rangeShortScore += sweepShort ? 22 : 0
+rangeLongScore += rangeLongTrigger ? 18 : 0
+rangeShortScore += rangeShortTrigger ? 18 : 0
+rangeLongScore += (trigger5Long or momentumCrossLong) ? 10 : 0
+rangeShortScore += (trigger5Short or momentumCrossShort) ? 10 : 0
+rangeLongScore += (aboveValue or nearPoc) ? 8 : 0
+rangeShortScore += (belowValue or nearPoc) ? 8 : 0
+rangeLongScore += inSession ? 5 : 0
+rangeShortScore += inSession ? 5 : 0
+rangeLongScore += rangeQualityLong ? 7 : -12
+rangeShortScore += rangeQualityShort ? 7 : -12
+rangeLongScore := math.max(0.0, math.min(100.0, rangeLongScore))
+rangeShortScore := math.max(0.0, math.min(100.0, rangeShortScore))
+revStructureLong = chochLong or sweepLong or retestLongClean
+revStructureShort = chochShort or sweepShort or retestShortClean
+reversalQualityLong = (retestLongClean or (sweepLong and breakDisplacementOk and close > ema21Local and not rsiExhaustLong) or (chochLong and breakDisplacementOk and close > ema50Local)) and not lateLongImpulse
+reversalQualityShort = (retestShortClean or (sweepShort and breakDisplacementOk and close < ema21Local and not rsiExhaustShort) or (chochShort and breakDisplacementOk and close < ema50Local)) and not lateShortImpulse
+float sniperRevLongScore = 0.0
+float sniperRevShortScore = 0.0
+sniperRevLongScore += chochLong ? 22 : sweepLong ? 20 : retestLongClean ? 18 : 0
+sniperRevShortScore += chochShort ? 22 : sweepShort ? 20 : retestShortClean ? 18 : 0
+sniperRevLongScore += ltfLongCount * 14
+sniperRevShortScore += ltfShortCount * 14
+sniperRevLongScore += close > ema21Local and pdiLocal > mdiLocal ? 10 : 0
+sniperRevShortScore += close < ema21Local and mdiLocal > pdiLocal ? 10 : 0
+sniperRevLongScore += aboveValue ? 10 : 0
+sniperRevShortScore += belowValue ? 10 : 0
+sniperRevLongScore += interLongOk ? 8 : 0
+sniperRevShortScore += interShortOk ? 8 : 0
+sniperRevLongScore += breakDisplacementOk ? 8 : 0
+sniperRevShortScore += breakDisplacementOk ? 8 : 0
+sniperRevLongScore += inSession ? 5 : 0
+sniperRevShortScore += inSession ? 5 : 0
+sniperRevLongScore += (not chopBlock) ? 5 : 0
+sniperRevShortScore += (not chopBlock) ? 5 : 0
+sniperRevLongScore += (longChaseBlock or rsiExhaustLong or lateLongImpulse or weakBosLong) ? -15 : 0
+sniperRevShortScore += (shortChaseBlock or rsiExhaustShort or lateShortImpulse or weakBosShort) ? -15 : 0
+sniperRevLongScore := math.max(0.0, math.min(100.0, sniperRevLongScore))
+sniperRevShortScore := math.max(0.0, math.min(100.0, sniperRevShortScore))
+sniperTriggerLong = (sweepLong or retestLongClean or firstBreakLongOk or (allowContinuationPullback and pullbackLong and recentBullShift and (momentumCrossLong or trigger5Long))) and close > ema21Local and pdiLocal > mdiLocal and adxLocal >= minAdxActive
+sniperTriggerShort = (sweepShort or retestShortClean or firstBreakShortOk or (allowContinuationPullback and pullbackShort and recentBearShift and (momentumCrossShort or trigger5Short))) and close < ema21Local and mdiLocal > pdiLocal and adxLocal >= minAdxActive
+sniperHtfLong = (trend4Long or soft4Long) and mom1Long and struct15Long
+sniperHtfShort = (trend4Short or soft4Short) and mom1Short and struct15Short
+sniperInterLong = not requireIntermarketSniper or interLongOk or decoupledMode or shockMode
+sniperInterShort = not requireIntermarketSniper or interShortOk or decoupledMode or shockMode
+bullRegime = c4 > e200_4 and e50_4 > e200_4 and c1 > e200_1 and e50_1 > e200_1 and slope50_4 >= 0
+bearRegime = c4 < e200_4 and e50_4 < e200_4 and c1 < e200_1 and e50_1 < e200_1 and slope50_4 <= 0
+longCounterTrendException = (chochLong or retestLongClean) and sniperRevLongScore >= counterTrendExceptionScore and c15 > e50_15 and close > ema50Local and aboveValue
+shortCounterTrendException = (chochShort or retestShortClean) and sniperRevShortScore >= counterTrendExceptionScore and c15 < e50_15 and close < ema50Local and belowValue
+longCleanStructureOk = not longNeedsCleanStructure or retestLongClean or sweepLong or chochLong or firstBreakLongOk
+v50LongContextOk = longCleanStructureOk and (not (shockMode or decoupledMode) or ((reversalQualityLong or retestLongClean or chochLong) and ltfLongCount >= sniperReversalLtfMin and (aboveValue or longCounterTrendException) and not recentTopRejection))
+trendDayLongOk = not trendDayMode or autoTrendDayLong or longCounterTrendException
+trendDayShortOk = not trendDayMode or autoTrendDayShort or shortCounterTrendException
+longRegimeOk = (not useRegimeFilter or not bearRegime or trend4Long or longCounterTrendException) and trendDayLongOk
+shortRegimeOk = (not useRegimeFilter or not bullRegime or trend4Short or shortCounterTrendException) and trendDayShortOk
+sessionExtraScore = useAdaptiveQuality and pureLondon ? londonExtraScore : 0.0
+longDiscretionaryExtra = longV50ExtraScore + (shockMode ? longHeadlineExtraScore : decoupledMode ? longV50ExtraScore : 0.0)
+longTrendThreshold = sniperScoreMin + longScorePremium + sessionExtraScore + regimeScoreExtra + longDiscretionaryExtra
+shortTrendThreshold = sniperScoreMin + shortScorePremium + sessionExtraScore + regimeScoreExtra
+longReversalThreshold = sniperReversalMin + longScorePremium + sessionExtraScore + regimeScoreExtra + longDiscretionaryExtra
+shortReversalThreshold = sniperReversalMin + shortScorePremium + sessionExtraScore + regimeScoreExtra
+activeContinuationLongScore = enableTrendContinuation ? continuationLongScore : 0.0
+activeContinuationShortScore = enableTrendContinuation ? continuationShortScore : 0.0
+activeRangeLongScore = enableRangeScalp ? rangeLongScore : 0.0
+activeRangeShortScore = enableRangeScalp ? rangeShortScore : 0.0
+currentLongScore = math.max(math.max(scoreLong, sniperRevLongScore), math.max(activeContinuationLongScore, activeRangeLongScore))
+currentShortScore = math.max(math.max(scoreShort, sniperRevShortScore), math.max(activeContinuationShortScore, activeRangeShortScore))
+timeGuardRaw = sessEarlyAsiaWeak or sessMidLondonChop or sessLondonFix
+aPlusLongTimeOverride = allowAPlusTimeOverride and currentLongScore >= aPlusOverrideScore and (trend4Long or longCounterTrendException) and interLongOk and (retestLongClean or chochLong or sweepLong) and not chopBlock and not longChaseBlock
+aPlusShortTimeOverride = allowAPlusTimeOverride and currentShortScore >= aPlusOverrideScore and (trend4Short or shortCounterTrendException) and interShortStrong and (retestShortClean or chochShort or sweepShort) and not chopBlock and not shortChaseBlock
+continuationLongTimeOverride = allowContinuationTimeOverride and continuationLongScore >= continuationOverrideScore and trendContinuationLongBase and continuationTriggerLong and continuationQualityLong and adxLocal >= continuationAdxMin and not macroNewsBlock
+continuationShortTimeOverride = allowContinuationTimeOverride and continuationShortScore >= continuationOverrideScore and trendContinuationShortBase and continuationTriggerShort and continuationQualityShort and adxLocal >= continuationAdxMin and not macroNewsBlock
+londonQualityBase = not pureLondon or ((volRatioLocal >= londonMinVolRatio or breakDisplacementOk) and adxLocal >= londonMinAdx and not compressionChop)
+adaptiveSessionLongOk = not useAdaptiveQuality or londonQualityBase or (currentLongScore >= aPlusOverrideScore and reversalQualityLong and breakDisplacementOk)
+adaptiveSessionShortOk = not useAdaptiveQuality or londonQualityBase or (currentShortScore >= aPlusOverrideScore and reversalQualityShort and breakDisplacementOk)
+longExtraOk = not longNeedsExtraQuality or (trend4Long and (interLongOk or decoupledMode or shockMode)) or interLongStrong or longCounterTrendException or (reversalQualityLong and aboveValue and ltfLongCount >= sniperReversalLtfMin and currentLongScore >= longReversalThreshold + 4) or ((decoupledMode or shockMode) and reversalQualityLong and ltfLongCount >= sniperReversalLtfMin and currentLongScore >= longReversalThreshold)
+timeQualityBlockLong = timeGuardRaw and not (aPlusLongTimeOverride or continuationLongTimeOverride)
+timeQualityBlockShort = timeGuardRaw and not (aPlusShortTimeOverride or continuationShortTimeOverride)
+timeQualityBlock = currentLongScore > currentShortScore ? timeQualityBlockLong : currentShortScore > currentLongScore ? timeQualityBlockShort : timeGuardRaw
+lateLongWindow = useSessionQualityGuard and avoidLateWeakLongs and not na(time(timeframe.period, lateLongGuardSession, sessionTimezone))
+lateLongAPlusOverride = currentLongScore >= lateLongOverrideScore and (trend4Long or longCounterTrendException) and interLongOk and aboveValue and (retestLongClean or chochLong or sweepLong) and not chopBlock and not longChaseBlock and adxLocal >= minAdxSniper
+lateLongWeakBlock = lateLongWindow and not lateLongAPlusOverride
+nyLongTrapAPlus = currentLongScore >= nyLongTrapOverrideScore and (trend4Long or longCounterTrendException) and interLongStrong and aboveValue and (retestLongClean or chochLong or sweepLong) and not recentTopRejection and not lateLongImpulse and not chopBlock and not longChaseBlock and adxLocal >= minAdxSniper
+nyLongTrapBlock = nyLongTrapWindow and not nyLongTrapAPlus
+nyLateLongAPlus = allowNyLateLongAPlus and currentLongScore >= nyLateLongAPlusScore and trend4Long and interLongStrong and aboveValue and (retestLongClean or chochLong or sweepLong) and breakDisplacementOk and not recentTopRejection and not lateLongImpulse and not chopBlock and not longChaseBlock and adxLocal >= minAdxSniper + 3
+nyLateLongBlock = nyLateLongBlockWindow and not nyLateLongAPlus
+nyShortWeakBlock = useSessionQualityGuard and avoidNyShorts and sessUS and not sessLondon and not (trend4Short and interShortStrong and math.max(scoreShort, sniperRevShortScore) >= nyShortExceptionScore)
+sessionQualityLongOk = not timeQualityBlockLong and not lateLongWeakBlock and not nyLongTrapBlock and not nyLateLongBlock and adaptiveSessionLongOk
+sessionQualityShortOk = not timeQualityBlockShort and not nyShortWeakBlock and adaptiveSessionShortOk
+var int lastLongLossBar = na
+var int lastShortLossBar = na
+longLossCooldownOk = lossCooldownBars <= 0 or na(lastLongLossBar) or bar_index - lastLongLossBar > lossCooldownBars
+shortLossCooldownOk = lossCooldownBars <= 0 or na(lastShortLossBar) or bar_index - lastShortLossBar > lossCooldownBars
+sniperReversalLongSetup = enableSniperReversal and sniperRevLongScore >= longReversalThreshold and sniperRevLongScore >= sniperRevShortScore + scoreGap * 0.5 and ltfLongCount >= sniperReversalLtfMin and reversalQualityLong and recentBullShift and close > ema21Local and pdiLocal > mdiLocal and qualityLongOk and headlineLongOk and v50LongContextOk and sniperInterLong and longRegimeOk and sessionQualityLongOk and longLossCooldownOk and longExtraOk
+sniperReversalShortSetup = enableSniperReversal and sniperRevShortScore >= shortReversalThreshold and sniperRevShortScore >= sniperRevLongScore + scoreGap * 0.5 and ltfShortCount >= sniperReversalLtfMin and reversalQualityShort and recentBearShift and close < ema21Local and mdiLocal > pdiLocal and qualityShortOk and headlineShortOk and sniperInterShort and shortRegimeOk and sessionQualityShortOk and shortLossCooldownOk
+sniperTrendLongSetup = scoreLong >= longTrendThreshold and scoreLong >= scoreShort + scoreGap and longMtfCount >= sniperMtfMin and sniperHtfLong and sniperTriggerLong and sniperInterLong and qualityLongOk and headlineLongOk and v50LongContextOk and longRegimeOk and sessionQualityLongOk and longLossCooldownOk and longExtraOk
+sniperTrendShortSetup = scoreShort >= shortTrendThreshold and scoreShort >= scoreLong + scoreGap and shortMtfCount >= sniperMtfMin and sniperHtfShort and sniperTriggerShort and sniperInterShort and qualityShortOk and headlineShortOk and shortRegimeOk and sessionQualityShortOk and shortLossCooldownOk
+continuationSessionLongOk = inSession and (sessionQualityLongOk or continuationLongTimeOverride)
+continuationSessionShortOk = inSession and (sessionQualityShortOk or continuationShortTimeOverride)
+trendContinuationLongSetup = enableTrendContinuation and continuationLongScore >= continuationScoreMin + regimeScoreExtra + longDiscretionaryExtra and continuationLongScore >= continuationShortScore + scoreGap * 0.35 and trendContinuationLongBase and continuationTriggerLong and continuationQualityLong and headlineLongOk and v50LongContextOk and sniperInterLong and longRegimeOk and continuationSessionLongOk and longLossCooldownOk
+trendContinuationShortSetup = enableTrendContinuation and continuationShortScore >= continuationScoreMin + regimeScoreExtra and continuationShortScore >= continuationLongScore + scoreGap * 0.35 and trendContinuationShortBase and continuationTriggerShort and continuationQualityShort and headlineShortOk and sniperInterShort and shortRegimeOk and continuationSessionShortOk and shortLossCooldownOk
+rangeLongSetup = enableRangeScalp and rangeLongScore >= rangeScoreMin + regimeScoreExtra + longDiscretionaryExtra and rangeLongScore >= rangeShortScore + scoreGap * 0.25 and rangeLongTrigger and rangeQualityLong and headlineLongOk and v50LongContextOk and inSession and not timeQualityBlockLong and longLossCooldownOk
+rangeShortSetup = enableRangeScalp and rangeShortScore >= rangeScoreMin + regimeScoreExtra and rangeShortScore >= rangeLongScore + scoreGap * 0.25 and rangeShortTrigger and rangeQualityShort and headlineShortOk and inSession and not timeQualityBlockShort and shortLossCooldownOk
+sniperLongSetup = sniperTrendLongSetup or sniperReversalLongSetup
+sniperShortSetup = sniperTrendShortSetup or sniperReversalShortSetup
+rawLong = sniperLongSetup or trendContinuationLongSetup or rangeLongSetup
+rawShort = sniperShortSetup or trendContinuationShortSetup or rangeShortSetup
+displayScoreLong = currentLongScore
+displayScoreShort = currentShortScore
+longPlaybook = trendContinuationLongSetup ? "CONTINUATION" : sniperReversalLongSetup ? "REVERSAL" : sniperTrendLongSetup ? "RETEST" : rangeLongSetup ? "RANGE" : "WAIT"
+shortPlaybook = trendContinuationShortSetup ? "CONTINUATION" : sniperReversalShortSetup ? "REVERSAL" : sniperTrendShortSetup ? "RETEST" : rangeShortSetup ? "RANGE" : "WAIT"
+threshold = sniperScoreMin
+displayThreshold = enableSniperReversal ? sniperReversalMin : threshold
+cooldownBars = sniperCooldown
+var int lastSignalBar = na
+var bool tradeActive = false
+var int debugRawLongCount = 0
+var int debugRawShortCount = 0
+var int debugOrderCount = 0
+canSignal = na(lastSignalBar) or bar_index - lastSignalBar > cooldownBars
+barReady = not confirmOnClose or barstate.isconfirmed
+longSignal = rawLong and tradeAllowed and canSignal and barReady and not tradeActive
+shortSignal = rawShort and tradeAllowed and canSignal and barReady and not tradeActive
+if rawLong and tradeAllowed and barReady
+    debugRawLongCount += 1
+if rawShort and tradeAllowed and barReady
+    debugRawShortCount += 1
+if longSignal or shortSignal
+    lastSignalBar := bar_index
+    debugOrderCount += 1
+f_trade_plan(int _dir, float _entry, float _atr, float _recentLow, float _recentHigh) =>
+    float rr1 = rrTp1
+    float rr2 = math.max(rrTp2, rr1 + 0.25)
+    float rr3 = math.max(rrTp3, rr2 + 0.25)
+    float minStop = slMinPips * pipValue
+    float maxStop = math.max(slMaxPips * pipValue, minStop + syminfo.mintick)
+    float structureMaxStop = math.max(structureStopMaxPips * pipValue, maxStop)
+    float buffer = _atr * stopBufferAtr
+    float support = f_nearest_below(swingLows, _entry)
+    float resistance = f_nearest_above(swingHighs, _entry)
+    if _recentLow < _entry and (na(support) or _recentLow > support)
+        support := _recentLow
+    if _recentHigh > _entry and (na(resistance) or _recentHigh < resistance)
+        resistance := _recentHigh
+    float rawStop = _dir == 1 ? (na(support) ? _entry - minStop : support - buffer) : (na(resistance) ? _entry + minStop : resistance + buffer)
+    float rawDist = math.abs(_entry - rawStop)
+    float stopCap = allowStructureStopStretch and rawDist > maxStop ? structureMaxStop : maxStop
+    float stopDist = math.min(math.max(rawDist, minStop), stopCap)
+    float sl = _dir == 1 ? _entry - stopDist : _entry + stopDist
+    float risk = math.abs(_entry - sl)
+    float baseTp1 = _dir == 1 ? _entry + risk * rr1 : _entry - risk * rr1
+    float baseTp2 = _dir == 1 ? _entry + risk * rr2 : _entry - risk * rr2
+    float baseTp3 = _dir == 1 ? _entry + risk * rr3 : _entry - risk * rr3
+    float sTp1 = _dir == 1 ? f_nearest_above(swingHighs, baseTp1) : f_nearest_below(swingLows, baseTp1)
+    float tp1 = _dir == 1 ? (not na(sTp1) and sTp1 <= baseTp2 ? sTp1 : baseTp1) : (not na(sTp1) and sTp1 >= baseTp2 ? sTp1 : baseTp1)
+    float sTp2Base = _dir == 1 ? math.max(baseTp2, tp1 + syminfo.mintick) : math.min(baseTp2, tp1 - syminfo.mintick)
+    float sTp2 = _dir == 1 ? f_nearest_above(swingHighs, sTp2Base) : f_nearest_below(swingLows, sTp2Base)
+    float tp2 = _dir == 1 ? (not na(sTp2) and sTp2 <= baseTp3 ? sTp2 : baseTp2) : (not na(sTp2) and sTp2 >= baseTp3 ? sTp2 : baseTp2)
+    tp2 := _dir == 1 ? math.max(tp2, tp1 + syminfo.mintick) : math.min(tp2, tp1 - syminfo.mintick)
+    float sTp3Base = _dir == 1 ? math.max(tp2 + syminfo.mintick, baseTp2) : math.min(tp2 - syminfo.mintick, baseTp2)
+    float sTp3 = _dir == 1 ? f_nearest_above(swingHighs, sTp3Base) : f_nearest_below(swingLows, sTp3Base)
+    float tp3 = _dir == 1 ? (not na(sTp3) and sTp3 <= baseTp3 ? sTp3 : baseTp3) : (not na(sTp3) and sTp3 >= baseTp3 ? sTp3 : baseTp3)
+    tp3 := _dir == 1 ? math.max(tp3, tp2 + syminfo.mintick) : math.min(tp3, tp2 - syminfo.mintick)
+    [sl, tp1, tp2, tp3]
+var float planEntry = na
+var float planSl = na
+var float planTp1 = na
+var float planTp2 = na
+var float planTp3 = na
+var int planDir = 0
+var float planLots = na
+var int planBar = na
+var int exitBar = na
+var string planStatus = "WAIT"
+var string planSetup = "WAIT"
+var bool tp1Done = false
+var bool tp2Done = false
+var float planScore = na
+var float planExitPrice = na
+var int invalidCount = 0
+var bool slAuditActive = false
+var int slAuditDir = 0
+var int slAuditStartBar = na
+var float slAuditEntry = na
+var float slAuditTp1 = na
+var bool slAuditEntryTagged = false
+if longSignal
+    planEntry := close
+    planDir := 1
+    planBar := bar_index
+    exitBar := na
+    planExitPrice := na
+    planStatus := "LIVE"
+    planSetup := longPlaybook
+    tradeActive := true
+    tp1Done := false
+    tp2Done := false
+    invalidCount := 0
+    slAuditActive := false
+    planScore := displayScoreLong
+    [longSl, longTp1, longTp2, longTp3] = f_trade_plan(1, planEntry, atrLocal, recentLowStop, recentHighStop)
+    planSl := longSl
+    planTp1 := longTp1
+    planTp2 := longTp2
+    planTp3 := longTp3
+    float qtyBoostLong = f_qty_mult(planScore, trend4Long or strong1Long or longCounterTrendException, interLongStrong)
+    float profileBoostLong = f_profile_mult(planScore)
+    planLots := math.abs(planEntry - planSl) > 0 ? ((accountSize * riskPct / 100.0 * f_risk_mult(planScore)) / (math.abs(planEntry - planSl) * usdPerPointPerLot)) * qtyBoostLong * profileBoostLong * longQtyFactor * regimeQtyMult : na
+    float qtyLongBase = useFixedBacktestQty ? backtestQty : ((na(planLots) or planLots <= 0) ? backtestQty : planLots)
+    float qtyLong = useFixedBacktestQty ? qtyLongBase * qtyBoostLong * profileBoostLong * longQtyFactor * regimeQtyMult : qtyLongBase
+    strategy.entry("L", strategy.long, qty=qtyLong)
+    strategy.exit("L TP1", "L", qty_percent=33, stop=planSl, limit=planTp1)
+    strategy.exit("L TP2", "L", qty_percent=33, stop=planSl, limit=planTp2)
+    strategy.exit("L TP3", "L", qty_percent=34, stop=planSl, limit=planTp3)
+if shortSignal
+    planEntry := close
+    planDir := -1
+    planBar := bar_index
+    exitBar := na
+    planExitPrice := na
+    planStatus := "LIVE"
+    planSetup := shortPlaybook
+    tradeActive := true
+    tp1Done := false
+    tp2Done := false
+    invalidCount := 0
+    slAuditActive := false
+    planScore := displayScoreShort
+    [shortSl, shortTp1, shortTp2, shortTp3] = f_trade_plan(-1, planEntry, atrLocal, recentLowStop, recentHighStop)
+    planSl := shortSl
+    planTp1 := shortTp1
+    planTp2 := shortTp2
+    planTp3 := shortTp3
+    float qtyBoostShort = f_qty_mult(planScore, trend4Short or strong1Short or shortCounterTrendException, interShortStrong)
+    float profileBoostShort = f_profile_mult(planScore)
+    planLots := math.abs(planEntry - planSl) > 0 ? ((accountSize * riskPct / 100.0 * f_risk_mult(planScore)) / (math.abs(planEntry - planSl) * usdPerPointPerLot)) * qtyBoostShort * profileBoostShort * shortQtyFactor * regimeQtyMult : na
+    float qtyShortBase = useFixedBacktestQty ? backtestQty : ((na(planLots) or planLots <= 0) ? backtestQty : planLots)
+    float qtyShort = useFixedBacktestQty ? qtyShortBase * qtyBoostShort * profileBoostShort * shortQtyFactor * regimeQtyMult : qtyShortBase
+    strategy.entry("S", strategy.short, qty=qtyShort)
+    strategy.exit("S TP1", "S", qty_percent=33, stop=planSl, limit=planTp1)
+    strategy.exit("S TP2", "S", qty_percent=33, stop=planSl, limit=planTp2)
+    strategy.exit("S TP3", "S", qty_percent=34, stop=planSl, limit=planTp3)
+maxBarsInTrade = sniperMaxBars
+if tradeActive and bar_index > planBar
+    bool slHit = planDir == 1 ? low <= planSl : high >= planSl
+    bool tp1Hit = planDir == 1 ? high >= planTp1 : low <= planTp1
+    bool tp2Hit = planDir == 1 ? high >= planTp2 : low <= planTp2
+    bool tp3Hit = planDir == 1 ? high >= planTp3 : low <= planTp3
+    float beStop = planDir == 1 ? planEntry + beBufferPips * pipValue : planEntry - beBufferPips * pipValue
+    bool beHit = moveStopToBEAfterTP1 and tp1Done and not tp2Done and (planDir == 1 ? low <= beStop : high >= beStop)
+    float ownScore = planDir == 1 ? displayScoreLong : displayScoreShort
+    float oppScore = planDir == 1 ? displayScoreShort : displayScoreLong
+    bool oppositeSetup = planDir == 1 ? rawShort : rawLong
+    int tradeAge = bar_index - planBar
+    bool newOppStructure = planDir == 1 ? barsSinceBearShift <= tradeAge : barsSinceBullShift <= tradeAge
+    bool structureInvalid = planDir == 1 ? newOppStructure and close < ema21Local : newOppStructure and close > ema21Local
+    bool valueLostAfterTp1 = planDir == 1 ? (useVwapPocFilter and not aboveValue) or close < ema21Local : (useVwapPocFilter and not belowValue) or close > ema21Local
+    bool tp1ProtectExit = tp1ProtectQuality and barReady and tradeAge > 2 and tp1Done and (valueLostAfterTp1 or oppScore >= ownScore + scoreGap * 0.5 or structureInvalid)
+    bool adverseMove = planDir == 1 ? close < planEntry - atrLocal * invalidAdverseAtr : close > planEntry + atrLocal * invalidAdverseAtr
+    bool entryLost = planDir == 1 ? close < planEntry : close > planEntry
+    bool hardScoreFlip = ownScore < threshold - 18 and adverseMove and oppScore >= ownScore
+    bool hardOppositeSetup = oppositeSetup and oppScore >= ownScore + invalidateGap and adverseMove
+    bool hardStructureInvalid = structureInvalid and (entryLost or adverseMove)
+    bool invalidRaw = hardScoreFlip or hardOppositeSetup or hardStructureInvalid
+    invalidCount := barReady and tradeAge >= invalidMinBars and invalidRaw ? invalidCount + 1 : 0
+    bool invalidNow = useDynamicInvalidation and invalidCount >= invalidConfirmBars
+    if beHit
+        planStatus := "BE EXIT"
+        tradeActive := false
+        exitBar := bar_index
+        planExitPrice := beStop
+    else if slHit
+        planStatus := "SL HIT"
+        tradeActive := false
+        exitBar := bar_index
+        planExitPrice := planSl
+        if planDir == 1
+            lastLongLossBar := bar_index
+        else
+            lastShortLossBar := bar_index
+        if showSlRecoveryAudit
+            slAuditActive := true
+            slAuditDir := planDir
+            slAuditStartBar := bar_index
+            slAuditEntry := planEntry
+            slAuditTp1 := planTp1
+            slAuditEntryTagged := false
+    else if tp3Hit
+        planStatus := "TP3 HIT"
+        tp1Done := true
+        tp2Done := true
+        tradeActive := false
+        exitBar := bar_index
+        planExitPrice := planTp3
+    else if tp2Hit
+        planStatus := "TP2 HIT"
+        tp1Done := true
+        tp2Done := true
+    else if tp1Hit
+        planStatus := "TP1 HIT"
+        tp1Done := true
+    else if tp1ProtectExit
+        planStatus := "PROTECTED"
+        tradeActive := false
+        exitBar := bar_index
+        planExitPrice := close
+        if planDir == 1
+            strategy.close("L", comment="PROTECTED")
+        else
+            strategy.close("S", comment="PROTECTED")
+    else if invalidNow
+        planStatus := "INVALID"
+        tradeActive := false
+        exitBar := bar_index
+        planExitPrice := close
+        bool invalidLoss = planDir == 1 ? close < planEntry : close > planEntry
+        if invalidLoss and planDir == 1
+            lastLongLossBar := bar_index
+        if invalidLoss and planDir == -1
+            lastShortLossBar := bar_index
+        if planDir == 1
+            strategy.close("L", comment="INVALID")
+        else
+            strategy.close("S", comment="INVALID")
+    if tradeActive and bar_index - planBar >= maxBarsInTrade
+        planStatus := "EXPIRED"
+        tradeActive := false
+        exitBar := bar_index
+        planExitPrice := close
+        bool expiredLoss = planDir == 1 ? close < planEntry : close > planEntry
+        if expiredLoss and planDir == 1
+            lastLongLossBar := bar_index
+        if expiredLoss and planDir == -1
+            lastShortLossBar := bar_index
+        if planDir == 1
+            strategy.close("L", comment="EXPIRED")
+        else
+            strategy.close("S", comment="EXPIRED")
+    if tradeActive and moveStopToBEAfterTP1 and tp1Done
+        if planDir == 1
+            strategy.exit("L TP2", "L", qty_percent=33, stop=beStop, limit=planTp2)
+            strategy.exit("L TP3", "L", qty_percent=34, stop=beStop, limit=planTp3)
+        else
+            strategy.exit("S TP2", "S", qty_percent=33, stop=beStop, limit=planTp2)
+            strategy.exit("S TP3", "S", qty_percent=34, stop=beStop, limit=planTp3)
+if forceIntradayFlat and flatNow and (tradeActive or strategy.position_size != 0)
+    planStatus := "DAY FLAT"
+    tradeActive := false
+    exitBar := bar_index
+    planExitPrice := close
+    strategy.close_all(comment="DAY FLAT")
+if showSlRecoveryAudit and slAuditActive and bar_index > slAuditStartBar
+    bool slRecoveredTp1 = slAuditDir == 1 ? high >= slAuditTp1 : low <= slAuditTp1
+    bool slRecoveredEntry = slAuditDir == 1 ? high >= slAuditEntry : low <= slAuditEntry
+    if slRecoveredTp1
+        label.new(bar_index, slAuditTp1, "SL->TP1", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, color=color.new(color.rgb(41, 98, 255), 5), textcolor=color.white, size=size.tiny, force_overlay=true)
+        slAuditActive := false
+    else if slRecoveredEntry and not slAuditEntryTagged
+        label.new(bar_index, slAuditEntry, "SL->ENTRY", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, color=color.new(color.gray, 10), textcolor=color.white, size=size.tiny, force_overlay=true)
+        slAuditEntryTagged := true
+    else if bar_index - slAuditStartBar >= slRecoveryBars
+        if not slAuditEntryTagged
+            label.new(bar_index, close, "SL CLEAN", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, color=color.new(color.rgb(255, 152, 0), 10), textcolor=color.white, size=size.tiny, force_overlay=true)
+        slAuditActive := false
+var array<line> tradeLines = array.new_line()
+var array<label> tradeLabels = array.new_label()
+var array<line> historyLines = array.new_line()
+var array<label> historyLabels = array.new_label()
+var array<int> historyLineTimes = array.new_int()
+var array<int> historyLabelTimes = array.new_int()
+var array<label> structureLabels = array.new_label()
+f_clear_drawings() =>
+    int ln = array.size(tradeLines)
+    if ln > 0
+        for i = 0 to ln - 1
+            line.delete(array.get(tradeLines, i))
+    int lb = array.size(tradeLabels)
+    if lb > 0
+        for i = 0 to lb - 1
+            label.delete(array.get(tradeLabels, i))
+    array.clear(tradeLines)
+    array.clear(tradeLabels)
+f_add_history(int _dir, int _entryBar, float _entry, int _exitBar, float _exitPrice, string _status) =>
+    color c = _status == "SL HIT" ? color.rgb(242, 54, 69) : _status == "EXPIRED" or _status == "INVALID" ? color.rgb(255, 152, 0) : color.rgb(8, 153, 129)
+    string side = _dir == 1 ? "L" : "S"
+    line ln = line.new(_entryBar, _entry, _exitBar, _exitPrice, xloc=xloc.bar_index, extend=extend.none, color=color.new(c, 15), width=1, style=line.style_dotted, force_overlay=true)
+    label le = label.new(_entryBar, _entry, side + " ENTRY", xloc=xloc.bar_index, yloc=yloc.price, style=_dir == 1 ? label.style_label_up : label.style_label_down, color=color.new(c, 15), textcolor=color.white, size=size.tiny, force_overlay=true)
+    label lx = label.new(_exitBar, _exitPrice, _status, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, color=color.new(c, 15), textcolor=color.white, size=size.tiny, force_overlay=true)
+    array.push(historyLines, ln)
+    array.push(historyLabels, le)
+    array.push(historyLabels, lx)
+    array.push(historyLineTimes, time)
+    array.push(historyLabelTimes, time)
+    array.push(historyLabelTimes, time)
+f_prune_history() =>
+    int cutoff = time - historyDays * 86400000
+    int i = array.size(historyLines) - 1
+    while i >= 0
+        if array.get(historyLineTimes, i) < cutoff
+            line.delete(array.get(historyLines, i))
+            array.remove(historyLines, i)
+            array.remove(historyLineTimes, i)
+        i := i - 1
+    int j = array.size(historyLabels) - 1
+    while j >= 0
+        if array.get(historyLabelTimes, j) < cutoff
+            label.delete(array.get(historyLabels, j))
+            array.remove(historyLabels, j)
+            array.remove(historyLabelTimes, j)
+        j := j - 1
+    while array.size(historyLines) > maxHistoryTrades
+        line.delete(array.shift(historyLines))
+        array.shift(historyLineTimes)
+    while array.size(historyLabels) > maxHistoryTrades * 2
+        label.delete(array.shift(historyLabels))
+        array.shift(historyLabelTimes)
+f_add_structure_label(bool _isUp, float _price, string _text, color _color) =>
+    label lb = label.new(bar_index, _price, _text, xloc=xloc.bar_index, yloc=yloc.price, style=_isUp ? label.style_label_up : label.style_label_down, color=color.new(_color, 10), textcolor=color.white, size=size.tiny, force_overlay=true)
+    array.push(structureLabels, lb)
+    if array.size(structureLabels) > maxStructureLabels
+        label.delete(array.shift(structureLabels))
+structureFull = showStructure and structureDetail == "Completo"
+structureClean = showStructure and structureDetail == "Pulito"
+structureSignals = showStructure and structureDetail == "Segnali"
+longSignalContext = longPlaybook != "WAIT" ? longPlaybook : retestLongClean ? "RETEST" : chochLong ? "CHOCH" : sweepLong ? "SWEEP" : "SETUP"
+shortSignalContext = shortPlaybook != "WAIT" ? shortPlaybook : retestShortClean ? "RETEST" : chochShort ? "CHOCH" : sweepShort ? "SWEEP" : "SETUP"
+if structureSignals and longSignal
+    f_add_structure_label(true, low - atrLocal * 0.35, longSignalContext, color.rgb(8, 153, 129))
+if structureSignals and shortSignal
+    f_add_structure_label(false, high + atrLocal * 0.35, shortSignalContext, color.rgb(242, 54, 69))
+if structureFull and bosLong
+    f_add_structure_label(true, low - atrLocal * 0.35, chochLong ? "CHOCH" : "BOS", color.rgb(8, 153, 129))
+if structureFull and bosShort
+    f_add_structure_label(false, high + atrLocal * 0.35, chochShort ? "CHOCH" : "BOS", color.rgb(242, 54, 69))
+if structureClean and chochLong
+    f_add_structure_label(true, low - atrLocal * 0.35, "CHOCH", color.rgb(8, 153, 129))
+if structureClean and chochShort
+    f_add_structure_label(false, high + atrLocal * 0.35, "CHOCH", color.rgb(242, 54, 69))
+if (structureFull or (structureClean and rawLong)) and retestLongClean
+    f_add_structure_label(true, low - atrLocal * 0.25, "RETEST", color.rgb(8, 153, 129))
+if (structureFull or (structureClean and rawShort)) and retestShortClean
+    f_add_structure_label(false, high + atrLocal * 0.25, "RETEST", color.rgb(242, 54, 69))
+cleanupClosed = not keepHistory and not tradeActive and not na(exitBar) and bar_index - exitBar >= clearClosedAfter
+if cleanupClosed
+    if showCompactHistory and not na(planBar) and not na(planExitPrice)
+        f_add_history(planDir, planBar, planEntry, exitBar, planExitPrice, planStatus)
+        f_prune_history()
+    f_clear_drawings()
+    planEntry := na
+    planSl := na
+    planTp1 := na
+    planTp2 := na
+    planTp3 := na
+    planDir := 0
+    planLots := na
+    planBar := na
+    exitBar := na
+    planExitPrice := na
+    planStatus := "WAIT"
+    planSetup := "WAIT"
+    planScore := na
+    tp1Done := false
+    tp2Done := false
+if showCompactHistory and not cleanupClosed
+    f_prune_history()
+f_add_line(float _price, color _color, string _text, int _width) =>
+    line ln = line.new(bar_index, _price, bar_index + projectionBars, _price, xloc=xloc.bar_index, extend=extend.right, color=_color, width=_width, force_overlay=true)
+    label lb = label.new(bar_index + projectionBars, _price, _text + " " + f_price(_price), xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, color=_color, textcolor=color.white, size=size.tiny, force_overlay=true)
+    array.push(tradeLines, ln)
+    array.push(tradeLabels, lb)
+f_add_signal_marker(int _dir) =>
+    float y = _dir == 1 ? low - atrLocal * 0.25 : high + atrLocal * 0.25
+    color c = _dir == 1 ? color.rgb(8, 153, 129) : color.rgb(242, 54, 69)
+    label lb = label.new(bar_index, y, _dir == 1 ? "BUY" : "SELL", xloc=xloc.bar_index, yloc=yloc.price, style=_dir == 1 ? label.style_label_up : label.style_label_down, color=c, textcolor=color.white, size=size.small, force_overlay=true)
+    array.push(tradeLabels, lb)
+if showTradePlan and (longSignal or shortSignal)
+    if not keepHistory
+        f_clear_drawings()
+    color dirColor = planDir == 1 ? color.rgb(8, 153, 129) : color.rgb(242, 54, 69)
+    f_add_line(planEntry, dirColor, "ENTRY", 2)
+    f_add_line(planSl, color.rgb(242, 54, 69), "SL", 2)
+    f_add_line(planTp1, color.rgb(255, 152, 0), "TP1", 1)
+    f_add_line(planTp2, color.rgb(3, 169, 244), "TP2", 1)
+    f_add_line(planTp3, color.rgb(8, 153, 129), "TP3", 2)
+    if showSignalMarker
+        f_add_signal_marker(planDir)
+biasColor = displayScoreLong > displayScoreShort + scoreGap ? color.new(color.rgb(8, 153, 129), 90) : displayScoreShort > displayScoreLong + scoreGap ? color.new(color.rgb(242, 54, 69), 90) : na
+bgcolor(showBackgroundBias ? biasColor : na)
+plot(showVwapPoc ? vwapLocal : na, "VWAP sessione", color=color.new(color.rgb(3, 169, 244), vwapTransparency), linewidth=1)
+plot(showVwapPoc and pocDisplay != "Off" ? pocVisual : na, "POC rolling", color=color.new(color.rgb(255, 152, 0), pocTransparency), linewidth=1)
+plot(showRoundLevels ? roundAbove : na, "Round level sopra", color=color.new(color.gray, roundTransparency), linewidth=1, style=plot.style_linebr)
+plot(showRoundLevels ? roundBelow : na, "Round level sotto", color=color.new(color.gray, roundTransparency), linewidth=1, style=plot.style_linebr)
+var table dash = table.new(position.top_right, 4, 18, bgcolor=color.rgb(19, 23, 34), border_color=color.rgb(54, 60, 78), border_width=1)
+maxScore = math.max(displayScoreLong, displayScoreShort)
+qualityScore = not na(planScore) and planStatus != "WAIT" ? planScore : maxScore
+biasText = displayScoreLong > displayScoreShort + scoreGap ? "LONG" : displayScoreShort > displayScoreLong + scoreGap ? "SHORT" : "NEUTRAL"
+actionText = tradeActive ? planDir == 1 ? "LONG LIVE" : "SHORT LIVE" : rawLong and tradeAllowed and canSignal ? "BUY READY" : rawShort and tradeAllowed and canSignal ? "SELL READY" : "WAIT"
+actionIsLong = actionText == "LONG LIVE" or actionText == "BUY READY"
+actionIsShort = actionText == "SHORT LIVE" or actionText == "SELL READY"
+mtfNeed = sniperMtfMin
+thresholdText = "L" + str.tostring(math.round(longTrendThreshold)) + " S" + str.tostring(math.round(shortTrendThreshold))
+regimeBlock = displayScoreLong > displayScoreShort ? not longRegimeOk : displayScoreShort > displayScoreLong ? not shortRegimeOk : false
+cooldownBlock = displayScoreLong > displayScoreShort ? not longLossCooldownOk : displayScoreShort > displayScoreLong ? not shortLossCooldownOk : false
+adaptiveBlock = displayScoreLong > displayScoreShort ? not adaptiveSessionLongOk : displayScoreShort > displayScoreLong ? not adaptiveSessionShortOk : false
+filtersText = flatNow ? "DAY FLAT" : macroNewsBlock ? "NEWS BLOCK" : not inSession ? "NO SESSION" : not volumeOk ? "LOW VOL" : shockMode and not (headlineLongOk or headlineShortOk) ? "HEADLINE Q" : decoupledMode ? "DECOUPLED" : nyLateLongBlock ? "NY LONG OFF" : nyLongTrapBlock ? "NY LONG Q" : lateLongImpulse ? "LATE IMPULSE" : lateLongWeakBlock ? "LATE LONG" : timeQualityBlock ? "TIME GUARD" : adaptiveBlock ? "SESSION Q" : nyShortWeakBlock ? "NY SHORT" : cooldownBlock ? "LOSS CD" : regimeBlock ? "HTF REGIME" : compressionChop ? "VALUE CHOP" : chopBlock ? "POC CHOP" : weakBosLong or weakBosShort ? "WEAK BOS" : longChaseBlock or shortChaseBlock ? "ANTI CHASE" : "READY"
+longStructureText = retestLongClean ? "RETEST" : chochLong ? "CHOCH" : bosLong ? "BOS+" : sweepLong ? "SWEEP" : weakBosLong ? "BOS?" : recentBullShift ? "SHIFT" : "--"
+shortStructureText = retestShortClean ? "RETEST" : chochShort ? "CHOCH" : bosShort ? "BOS+" : sweepShort ? "SWEEP" : weakBosShort ? "BOS?" : recentBearShift ? "SHIFT" : "--"
+longFilterText = not inSession ? "NO SESSION" : not volumeOk ? "LOW VOL" : not headlineLongOk ? "HEADLINE Q" : not v50LongContextOk ? "LONG V50" : nyLateLongBlock ? "NY LONG OFF" : nyLongTrapBlock ? "NY LONG Q" : lateLongImpulse ? "LATE IMPULSE" : lateLongWeakBlock ? "LATE LONG" : timeQualityBlockLong ? "TIME GUARD" : not adaptiveSessionLongOk ? "SESSION Q" : not longExtraOk ? "LONG Q+" : not longLossCooldownOk ? "LOSS CD" : not longRegimeOk ? "HTF REGIME" : weakBosLong ? "WEAK BOS" : compressionChop ? "VALUE CHOP" : not valueLongOk ? "POC/VWAP" : useRoundFilter and roundRiskLong ? "ROUND" : longChaseBlock ? "CHASE" : rsiExhaustLong ? "EXHAUST" : qualityLongOk ? "OK" : "--"
+shortFilterText = not inSession ? "NO SESSION" : not volumeOk ? "LOW VOL" : not headlineShortOk ? "HEADLINE Q" : lateShortImpulse ? "LATE IMPULSE" : timeQualityBlock ? "TIME GUARD" : not adaptiveSessionShortOk ? "SESSION Q" : nyShortWeakBlock ? "NY SHORT" : not shortLossCooldownOk ? "LOSS CD" : not shortRegimeOk ? "HTF REGIME" : weakBosShort ? "WEAK BOS" : compressionChop ? "VALUE CHOP" : not valueShortOk ? "POC/VWAP" : useRoundFilter and roundRiskShort ? "ROUND" : shortChaseBlock ? "CHASE" : rsiExhaustShort ? "EXHAUST" : qualityShortOk ? "OK" : "--"
+longBlockText = rawLong ? longPlaybook : not inSession ? "NO SESSION" : not volumeOk ? "LOW VOL" : not headlineLongOk ? "HEADLINE Q" : not v50LongContextOk ? "LONG V50" : nyLateLongBlock ? "NY LONG OFF" : nyLongTrapBlock ? "NY LONG Q" : timeQualityBlockLong ? "TIME GUARD" : trendContinuationLongBase and not continuationTriggerLong ? "CONT WAIT" : trendContinuationLongBase and not continuationQualityLong ? "CONT QUAL" : rangeMarket and not rangeLongTrigger ? "RANGE WAIT" : not trendDayLongOk ? "TREND DAY" : not longRegimeOk ? "HTF REGIME" : not sniperInterLong ? "MACRO" : not qualityLongOk ? longFilterText : "NO SETUP"
+shortBlockText = rawShort ? shortPlaybook : not inSession ? "NO SESSION" : not volumeOk ? "LOW VOL" : not headlineShortOk ? "HEADLINE Q" : timeQualityBlockShort ? "TIME GUARD" : trendContinuationShortBase and not continuationTriggerShort ? "CONT WAIT" : trendContinuationShortBase and not continuationQualityShort ? "CONT QUAL" : rangeMarket and not rangeShortTrigger ? "RANGE WAIT" : not trendDayShortOk ? "TREND DAY" : not shortRegimeOk ? "HTF REGIME" : not sniperInterShort ? "MACRO" : not qualityShortOk ? shortFilterText : "NO SETUP"
+ageText = na(planBar) ? "--" : str.tostring(bar_index - planBar) + "/" + str.tostring(maxBarsInTrade)
+longConclusion = rawLong and tradeAllowed and canSignal ? "LONG " + f_pct(displayScoreLong) : f_pct(displayScoreLong)
+shortConclusion = rawShort and tradeAllowed and canSignal ? "SHORT " + f_pct(displayScoreShort) : f_pct(displayScoreShort)
+tpArmedText = tradeActive ? moveStopToBEAfterTP1 and tp1Done ? "BE ARMED" : planDir == 1 ? "LONG TP" : "SHORT TP" : "NO TRADE"
+longS1Text = (soft4Long ? "OK " : "-- ") + "W" + f_num(wpr4)
+shortS1Text = (soft4Short ? "OK " : "-- ") + "W" + f_num(wpr4)
+longS2Text = (mom1Long ? "OK " : "-- ") + "A" + f_num(adx1) + " W" + f_num(wpr1)
+shortS2Text = (mom1Short ? "OK " : "-- ") + "A" + f_num(adx1) + " W" + f_num(wpr1)
+longS3Text = (struct15Long ? "OK " : "-- ") + "R" + f_num(rsi15)
+shortS3Text = (struct15Short ? "OK " : "-- ") + "R" + f_num(rsi15)
+longS4Text = (trigger10Long ? "OK " : "-- ") + "W" + f_num(wpr10)
+shortS4Text = (trigger10Short ? "OK " : "-- ") + "W" + f_num(wpr10)
+longS5Text = (trigger5Long ? "OK " : "-- ") + "W" + f_num(wpr5)
+shortS5Text = (trigger5Short ? "OK " : "-- ") + "W" + f_num(wpr5)
+longValueText = aboveValue ? "VALUE OK" : nearPoc ? "POC ZONE" : "--"
+shortValueText = belowValue ? "VALUE OK" : nearPoc ? "POC ZONE" : "--"
+roundLongText = roundRiskLong ? "ROUND RISK" : "OK"
+roundShortText = roundRiskShort ? "ROUND RISK" : "OK"
+reversalLongText = sweepLong ? "SWEEP" : chochLong ? "CHOCH" : retestLongClean ? "RETEST" : momentumCrossLong ? "MOM" : "--"
+reversalShortText = sweepShort ? "SWEEP" : chochShort ? "CHOCH" : retestShortClean ? "RETEST" : momentumCrossShort ? "MOM" : "--"
+continuationLongText = trendContinuationLongSetup ? "ACTIVE" : trendContinuationLongBase ? "ARMED" : contPullbackLong ? "PULLBACK" : "--"
+continuationShortText = trendContinuationShortSetup ? "ACTIVE" : trendContinuationShortBase ? "ARMED" : contPullbackShort ? "PULLBACK" : "--"
+playbookStatus = tradeActive ? planSetup : rawLong ? longPlaybook : rawShort ? shortPlaybook : "WAIT"
+longAuditCount = (soft4Long ? 1 : 0) + (mom1Long ? 1 : 0) + (struct15Long ? 1 : 0) + (trigger10Long ? 1 : 0) + (trigger5Long ? 1 : 0) + (aboveValue ? 1 : 0) + (sniperInterLong ? 1 : 0) + (adaptiveSessionLongOk and inSession ? 1 : 0) + (qualityLongOk and headlineLongOk ? 1 : 0)
+shortAuditCount = (soft4Short ? 1 : 0) + (mom1Short ? 1 : 0) + (struct15Short ? 1 : 0) + (trigger10Short ? 1 : 0) + (trigger5Short ? 1 : 0) + (belowValue ? 1 : 0) + (sniperInterShort ? 1 : 0) + (adaptiveSessionShortOk and inSession ? 1 : 0) + (qualityShortOk and headlineShortOk ? 1 : 0)
+auditNeed = mtfNeed + 3
+if showDashboard and barstate.islast
+    color longCol = color.rgb(8, 153, 129)
+    color shortCol = color.rgb(242, 54, 69)
+    color actionCol = actionIsLong ? longCol : actionIsShort ? shortCol : color.rgb(255, 152, 0)
+    color qCol = qualityScore >= 80 ? longCol : qualityScore >= 64 ? color.rgb(255, 152, 0) : shortCol
+    table.cell(dash, 0, 0, "XAU V50", text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 0, "LONG", bgcolor=color.new(longCol, 10), text_color=color.white, text_size=size.small)
+    table.cell(dash, 2, 0, "SHORT", bgcolor=color.new(shortCol, 10), text_color=color.white, text_size=size.small)
+    table.cell(dash, 3, 0, sessionName, text_color=color.rgb(255, 152, 0), text_size=size.small)
+    table.cell(dash, 0, 1, "REGIME / THR", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 1, regimeText + " " + headlineRisk, text_color=shockMode ? shortCol : decoupledMode ? color.rgb(255, 152, 0) : color.white, text_size=size.tiny)
+    table.cell(dash, 2, 1, "THR", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 3, 1, thresholdText, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 0, 2, "CONFIDENCE", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 2, f_pct(displayScoreLong), bgcolor=color.new(longCol, displayScoreLong >= displayThreshold ? 58 : 86), text_color=color.white, text_size=size.small)
+    table.cell(dash, 2, 2, f_pct(displayScoreShort), bgcolor=color.new(shortCol, displayScoreShort >= displayThreshold ? 58 : 86), text_color=color.white, text_size=size.small)
+    table.cell(dash, 3, 2, f_grade(qualityScore), text_color=qCol, text_size=size.small)
+    table.cell(dash, 0, 3, "CONCLUSION", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 3, longConclusion, bgcolor=f_bg(rawLong, longCol), text_color=rawLong ? color.white : color.gray, text_size=size.tiny)
+    table.cell(dash, 2, 3, shortConclusion, bgcolor=f_bg(rawShort, shortCol), text_color=rawShort ? color.white : color.gray, text_size=size.tiny)
+    table.cell(dash, 3, 3, biasText, text_color=biasText == "LONG" ? longCol : biasText == "SHORT" ? shortCol : color.rgb(255, 152, 0), text_size=size.tiny)
+    table.cell(dash, 0, 4, "S1 4H BIAS", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 4, longS1Text, bgcolor=f_bg(soft4Long, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 4, shortS1Text, bgcolor=f_bg(soft4Short, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 4, trend4Long ? "4H LONG" : trend4Short ? "4H SHORT" : "4H MIX", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 5, "S2 1H MOM", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 5, longS2Text, bgcolor=f_bg(mom1Long, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 5, shortS2Text, bgcolor=f_bg(mom1Short, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 5, adx1 >= minAdxSniper ? "ADX OK" : "ADX LOW", text_color=adx1 >= minAdxSniper ? longCol : color.rgb(255, 152, 0), text_size=size.tiny)
+    table.cell(dash, 0, 6, "S3 15M STRUCT", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 6, longS3Text, bgcolor=f_bg(struct15Long, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 6, shortS3Text, bgcolor=f_bg(struct15Short, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 6, str.tostring(longMtfCount) + "/" + str.tostring(shortMtfCount), text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 7, "S4 10M TRIG", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 7, longS4Text, bgcolor=f_bg(trigger10Long, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 7, shortS4Text, bgcolor=f_bg(trigger10Short, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 7, "10M", text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 8, "S5 5M ENTRY", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 8, longS5Text, bgcolor=f_bg(trigger5Long, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 8, shortS5Text, bgcolor=f_bg(trigger5Short, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 8, canSignal ? "ARMED" : "COOLDOWN", text_color=canSignal ? longCol : color.rgb(255, 152, 0), text_size=size.tiny)
+    table.cell(dash, 0, 9, "VWAP / POC", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 9, longValueText, bgcolor=f_bg(aboveValue, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 9, shortValueText, bgcolor=f_bg(belowValue, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 9, nearPoc ? "POC NEAR" : "VALUE", text_color=nearPoc ? color.rgb(255, 152, 0) : color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 10, "ROUND 50P", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 10, roundLongText, bgcolor=f_bg(not roundRiskLong, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 10, roundShortText, bgcolor=f_bg(not roundRiskShort, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 10, f_price(roundNearest), text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 11, "STRUCTURE", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 11, longStructureText, bgcolor=f_bg(recentBullShift, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 11, shortStructureText, bgcolor=f_bg(recentBearShift, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 11, filtersText, text_color=filtersText == "READY" ? longCol : color.rgb(255, 152, 0), text_size=size.tiny)
+    table.cell(dash, 0, 12, "MACRO", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 12, interLongOk ? "GOLD +" : "--", bgcolor=f_bg(interLongOk, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 12, interShortOk ? "GOLD -" : "--", bgcolor=f_bg(interShortOk, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 12, regimeText, text_color=shockMode ? shortCol : decoupledMode ? color.rgb(255, 152, 0) : color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 13, "PROGRESS", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 13, str.tostring(longAuditCount) + "/9", bgcolor=f_bg(longAuditCount >= auditNeed, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 13, str.tostring(shortAuditCount) + "/9", bgcolor=f_bg(shortAuditCount >= auditNeed, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 13, "MIN " + str.tostring(auditNeed), text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 14, "PLAYBOOK", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 14, longPlaybook, bgcolor=f_bg(rawLong, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 14, shortPlaybook, bgcolor=f_bg(rawShort, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 14, playbookStatus, text_color=playbookStatus == "WAIT" ? color.gray : color.rgb(255, 152, 0), text_size=size.tiny)
+    table.cell(dash, 0, 15, "BLOCKED BY", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 15, longBlockText, bgcolor=f_bg(rawLong, longCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 2, 15, shortBlockText, bgcolor=f_bg(rawShort, shortCol), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 15, sessClosed ? "MARKET CLOSED" : filtersText, text_color=sessClosed ? shortCol : filtersText == "READY" ? longCol : color.rgb(255, 152, 0), text_size=size.tiny)
+    table.cell(dash, 0, 16, "LOT / ENTRY", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 16, na(planLots) ? "--" : str.tostring(planLots, "#.###"), text_color=color.rgb(255, 152, 0), text_size=size.tiny)
+    table.cell(dash, 2, 16, na(planEntry) ? "--" : f_price(planEntry), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 3, 16, ageText, text_color=color.gray, text_size=size.tiny)
+    table.cell(dash, 0, 17, "BT / LEVELS", text_color=color.gray, text_halign=text.align_left, text_size=size.tiny)
+    table.cell(dash, 1, 17, na(planSl) ? "--" : f_price(planSl), text_color=shortCol, text_size=size.tiny)

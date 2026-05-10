@@ -14,15 +14,30 @@ import time
 
 import pandas as pd
 
-from src.backtesting.backtester import BacktestConfig, BacktestResult, run_backtest
+from src.backtesting.backtester import (
+    BacktestConfig,
+    BacktestResult,
+    TRADES_BY_STRATEGY_FILENAME,
+    format_trades_for_reporting,
+    run_backtest,
+)
 from src.backtesting.metrics import metrics_to_dict
 from src.strategy.rules import StrategyConfig
 from src.strategy.signals import TradingSignal
-from src.strategy_lab import strategy_v1, strategy_v2, strategy_v3, strategy_v4, strategy_v5, strategy_v6
+from src.strategy_lab import (
+    strategy_v1,
+    strategy_v2,
+    strategy_v3,
+    strategy_v4,
+    strategy_v5,
+    strategy_v6,
+    strategy_v50_pine,
+)
 
 
 SignalGenerator = Callable[[pd.DataFrame, StrategyConfig], TradingSignal]
 DEFAULT_REPORT_DIR = Path("reports/strategy_lab")
+DEFAULT_BACKTEST_REPORT_DIR = Path("reports/backtests")
 COMPARISON_FILENAME = "strategy_comparison.csv"
 
 
@@ -46,6 +61,7 @@ class StrategyLabResult:
     comparison: pd.DataFrame
     results: dict[str, BacktestResult]
     report_path: Path
+    trades_report_path: Path
 
 
 def get_default_strategy_specs() -> list[StrategySpec]:
@@ -93,6 +109,18 @@ def get_default_strategy_specs() -> list[StrategySpec]:
             min_risk_reward=strategy_v6.REQUIRED_MIN_RISK_REWARD,
             allowed_sessions=strategy_v6.REQUIRED_ALLOWED_SESSIONS,
         ),
+        StrategySpec(
+            name=strategy_v50_pine.STRATEGY_NAME,
+            version="strategy_v50_pine",
+            signal_generator=strategy_v50_pine.generate_signal,
+            description="Research-safe technical approximation of Pine V50 Structure Scalper.",
+        ),
+        StrategySpec(
+            name=strategy_v50_pine.MTF_STRATEGY_NAME,
+            version="strategy_v50_mtf",
+            signal_generator=strategy_v50_pine.generate_mtf_signal,
+            description="M5-based Pine V50 candidate using local multi-timeframe CSV features.",
+        ),
     ]
 
 
@@ -102,6 +130,7 @@ def run_strategy_lab(
     backtest_config: BacktestConfig | None = None,
     strategies: list[StrategySpec] | None = None,
     output_dir: str | Path = DEFAULT_REPORT_DIR,
+    trades_report_path: str | Path | None = None,
     show_progress: bool = False,
 ) -> StrategyLabResult:
     """
@@ -135,6 +164,7 @@ def run_strategy_lab(
             backtest_config=strategy_backtest_config,
             save_signals=False,
             signal_generator=spec.signal_generator,
+            strategy_name=spec.name,
         )
 
         results[spec.name] = result
@@ -158,6 +188,10 @@ def run_strategy_lab(
 
     comparison = pd.DataFrame(comparison_rows)
     report_path = export_strategy_comparison_report(comparison, output_dir)
+    exported_trades_path = export_strategy_trades_report(
+        results,
+        output_path=_resolve_strategy_trades_path(output_dir, trades_report_path),
+    )
 
     if show_progress:
         elapsed = time.perf_counter() - started_at
@@ -167,6 +201,7 @@ def run_strategy_lab(
         comparison=comparison,
         results=results,
         report_path=report_path,
+        trades_report_path=exported_trades_path,
     )
 
 
@@ -209,3 +244,35 @@ def export_strategy_comparison_report(
     comparison.to_csv(report_path, index=False)
 
     return report_path
+
+
+def export_strategy_trades_report(
+    results: dict[str, BacktestResult],
+    output_path: str | Path = DEFAULT_BACKTEST_REPORT_DIR / TRADES_BY_STRATEGY_FILENAME,
+) -> Path:
+    """Export one combined trade report with strategy_name for each trade."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    frames = [
+        format_trades_for_reporting(result.trades, strategy_name=strategy_name)
+        for strategy_name, result in results.items()
+    ]
+    trades = pd.concat(frames, ignore_index=True) if frames else format_trades_for_reporting(pd.DataFrame())
+    trades.to_csv(output_path, index=False)
+    trades.to_csv(output_path.with_name("trades.csv"), index=False)
+
+    return output_path
+
+
+def _resolve_strategy_trades_path(
+    output_dir: str | Path,
+    trades_report_path: str | Path | None,
+) -> Path:
+    if trades_report_path is not None:
+        return Path(trades_report_path)
+
+    if Path(output_dir) == DEFAULT_REPORT_DIR:
+        return DEFAULT_BACKTEST_REPORT_DIR / TRADES_BY_STRATEGY_FILENAME
+
+    return Path(output_dir) / TRADES_BY_STRATEGY_FILENAME

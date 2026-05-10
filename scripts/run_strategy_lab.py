@@ -132,6 +132,7 @@ def main() -> None:
     )
     print("")
     print(f"Comparison report exported: {result.report_path}")
+    print(f"Trades by strategy exported: {result.trades_report_path}")
     print("Important: Strategy Lab is backtesting only, not live trading.")
 
 

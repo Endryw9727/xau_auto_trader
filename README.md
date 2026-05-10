@@ -118,9 +118,26 @@ Strategie iniziali:
 - mtf_strict_offsession_strategy
 - mtf_feature_filtered_strategy
 - mtf_relaxed_offasia_strategy
+- v50_pine_technical_strategy
+- v50_pine_mtf_strategy
 
 Output:
 - reports/strategy_lab/strategy_comparison.csv
+
+## Lanciare V50 MTF Lab
+
+Esegue solo la candidata V50 basata sui CSV multi-timeframe locali:
+
+    python scripts/run_v50_mtf_lab.py
+
+Input:
+- data/raw/timeframes/XAUUSD_M5.csv
+- data/raw/timeframes/XAUUSD_M15.csv
+- data/raw/timeframes/XAUUSD_H1.csv
+- data/raw/timeframes/XAUUSD_H4.csv
+
+M10 viene generato da M5. I timeframe superiori vengono allineati senza
+lookahead usando solo candele chiuse.
 
 ## Lanciare Feature Filter Sweep
 
@@ -138,6 +155,20 @@ Usa `--relaxed` per una griglia ridotta ma piu permissiva.
 
 Output:
 - reports/strategy_lab/feature_filter_sweep.csv
+
+## Lanciare Walk-Forward Analysis
+
+Confronta le strategie Strategy Lab per periodo:
+
+    python scripts/run_walk_forward_analysis.py --period yearly
+    python scripts/run_walk_forward_analysis.py --period half
+    python scripts/run_walk_forward_analysis.py --period quarter
+
+Output:
+- reports/strategy_lab/walk_forward_analysis.csv
+
+La candidata `v50_pine_mtf_strategy` usa i CSV multi-timeframe locali quando
+disponibili.
 
 ## Aprire dashboard
 
