@@ -18,6 +18,8 @@ from src.strategy_lab import (
     v50_daily_coverage,
     v50_daily_coverage_sweep,
     v50_growth_refinement_sweep,
+    v50_loss_filter_sweep,
+    v50_loss_intelligence,
     v50_monte_carlo,
     v50_stress_test,
 )
@@ -38,6 +40,8 @@ __all__ = [
     "v50_daily_coverage",
     "v50_daily_coverage_sweep",
     "v50_growth_refinement_sweep",
+    "v50_loss_filter_sweep",
+    "v50_loss_intelligence",
     "v50_monte_carlo",
     "v50_stress_test",
 ]
