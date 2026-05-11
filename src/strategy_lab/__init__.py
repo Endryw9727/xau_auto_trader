@@ -21,6 +21,8 @@ from src.strategy_lab import (
     v50_loss_filter_sweep,
     v50_loss_intelligence,
     v50_monte_carlo,
+    v50_fast_loss_proxies,
+    v50_realtime_loss_proxy_sweep,
     v50_stress_test,
 )
 
@@ -43,5 +45,7 @@ __all__ = [
     "v50_loss_filter_sweep",
     "v50_loss_intelligence",
     "v50_monte_carlo",
+    "v50_fast_loss_proxies",
+    "v50_realtime_loss_proxy_sweep",
     "v50_stress_test",
 ]
