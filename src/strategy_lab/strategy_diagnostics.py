@@ -21,6 +21,7 @@ DEFAULT_DIAGNOSTIC_STRATEGIES = (
     "v50_final_low_risk_strategy",
     "v50_final_balanced_strategy",
     "v50_final_growth_strategy",
+    "v50_proxy_balanced_candidate",
     "v50_pine_mtf_strategy",
     "mtf_relaxed_offasia_strategy",
     "mtf_feature_filtered_strategy",

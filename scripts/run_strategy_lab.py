@@ -125,9 +125,14 @@ def main() -> None:
                 "risk_per_trade",
                 "min_risk_reward",
                 "total_trades",
-                "net_profit",
                 "win_rate",
+                "profit_factor",
+                "net_profit",
                 "max_drawdown",
+                "expectancy",
+                "profit_drawdown_ratio",
+                "max_consecutive_losses",
+                "average_trades_per_day",
             ]
         ]
     )

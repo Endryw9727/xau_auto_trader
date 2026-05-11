@@ -26,7 +26,14 @@ from src.market_data.timeframe_loader import load_xauusd_timeframes
 from src.settings import load_settings
 from src.strategy_lab import strategy_v50_pine
 from src.strategy_lab.v50_mtf_features import build_v50_mtf_dataset
-from src.strategy_lab.strategy_v50_candidates import export_v50_candidate_walk_forward
+from src.strategy_lab.strategy_diagnostics import build_strategy_diagnostics
+from src.strategy_lab.strategy_v50_candidates import (
+    FINAL_BALANCED_STRATEGY_NAME,
+    FINAL_GROWTH_STRATEGY_NAME,
+    FINAL_LOW_RISK_STRATEGY_NAME,
+    PROXY_BALANCED_CANDIDATE_STRATEGY_NAME,
+    export_v50_candidate_walk_forward,
+)
 from src.strategy_lab.walk_forward_analysis import (
     PERIOD_CHOICES,
     WALK_FORWARD_COLUMNS,
@@ -92,6 +99,13 @@ def main() -> None:
         show_progress=True,
     )
     summary = summarize_walk_forward_results(analysis)
+    selected_v50_names = (
+        FINAL_BALANCED_STRATEGY_NAME,
+        PROXY_BALANCED_CANDIDATE_STRATEGY_NAME,
+        FINAL_GROWTH_STRATEGY_NAME,
+        FINAL_LOW_RISK_STRATEGY_NAME,
+    )
+    selected_v50_summary = build_strategy_diagnostics(analysis, strategy_names=selected_v50_names)
     candidate_report_path = export_v50_candidate_walk_forward(analysis, args.period)
 
     print("")
@@ -105,6 +119,25 @@ def main() -> None:
     print("")
     print("Strategy summary:")
     print(summary.to_string(index=False))
+    print("")
+    print("Selected V50 candidate diagnostics:")
+    print(
+        selected_v50_summary[
+            [
+                "strategy_name",
+                "total_periods",
+                "active_periods",
+                "positive_periods",
+                "negative_periods",
+                "average_profit_factor",
+                "median_profit_factor",
+                "total_net_profit",
+                "worst_period_net_profit",
+                "worst_period_drawdown",
+                "stability_score",
+            ]
+        ].to_string(index=False)
+    )
     print("")
     print(f"Walk-forward report exported: {WALK_FORWARD_REPORT_PATH}")
     print(f"V50 candidate walk-forward report exported: {candidate_report_path}")

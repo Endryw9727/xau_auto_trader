@@ -33,6 +33,7 @@ from src.strategy_lab import (
     strategy_v6,
     strategy_v50_candidates,
     strategy_v50_pine,
+    strategy_v50_proxy_candidate,
 )
 
 
@@ -153,6 +154,12 @@ def get_default_strategy_specs() -> list[StrategySpec]:
             description="Final V50 growth candidate: ASIA/LONDON blocked, shorts London-only.",
         ),
         StrategySpec(
+            name=strategy_v50_proxy_candidate.STRATEGY_NAME,
+            version="strategy_v50_proxy_balanced_candidate",
+            signal_generator=strategy_v50_proxy_candidate.generate_signal,
+            description="Research candidate freezing realtime-safe proxy_balanced_combo filters.",
+        ),
+        StrategySpec(
             name=strategy_v50_pine.MTF_STRATEGY_NAME,
             version="strategy_v50_mtf",
             signal_generator=strategy_v50_pine.generate_mtf_signal,
@@ -206,6 +213,8 @@ def run_strategy_lab(
 
         results[spec.name] = result
         metrics = metrics_to_dict(result.metrics)
+        max_drawdown = float(metrics["max_drawdown"])
+        net_profit = float(metrics["net_profit"])
         comparison_rows.append(
             {
                 "strategy_name": spec.name,
@@ -215,6 +224,8 @@ def run_strategy_lab(
                 "min_risk_reward": strategy_backtest_config.min_risk_reward,
                 "allowed_sessions": _format_allowed_sessions(strategy_backtest_config.allowed_sessions),
                 "final_balance": result.final_balance,
+                "profit_drawdown_ratio": net_profit / max_drawdown if max_drawdown > 0 else 0.0,
+                "average_trades_per_day": _average_trades_per_day(result.trades, df),
                 **metrics,
             }
         )
@@ -267,6 +278,19 @@ def _format_allowed_sessions(allowed_sessions: list[str] | None) -> str:
         return "All"
 
     return ", ".join(allowed_sessions)
+
+
+def _average_trades_per_day(trades: pd.DataFrame, market_data: pd.DataFrame) -> float:
+    """Calculate trades per market calendar day for Strategy Lab comparisons."""
+    if trades.empty:
+        return 0.0
+    if not isinstance(market_data.index, pd.DatetimeIndex) or market_data.empty:
+        return 0.0
+
+    trading_days = pd.Series(market_data.index.date).nunique()
+    if trading_days <= 0:
+        return 0.0
+    return float(len(trades) / trading_days)
 
 
 def export_strategy_comparison_report(

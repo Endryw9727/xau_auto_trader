@@ -120,6 +120,7 @@ Strategie iniziali:
 - mtf_relaxed_offasia_strategy
 - v50_pine_technical_strategy
 - v50_pine_mtf_strategy
+- v50_proxy_balanced_candidate
 
 Output:
 - reports/strategy_lab/strategy_comparison.csv
@@ -169,6 +170,19 @@ Output:
 
 La candidata `v50_pine_mtf_strategy` usa i CSV multi-timeframe locali quando
 disponibili.
+
+## Validare V50 Proxy Candidate
+
+La candidata `v50_proxy_balanced_candidate` congela i filtri realtime-safe
+derivati da `proxy_balanced_combo`. Resta solo research/backtest e non viene
+promossa automaticamente.
+
+    python scripts/run_strategy_lab.py --full
+    python scripts/run_walk_forward_analysis.py --period month
+    python scripts/run_walk_forward_analysis.py --period quarter
+    python scripts/run_v50_stress_test.py
+    python scripts/run_v50_monte_carlo.py
+    python scripts/analyze_v50_proxy_candidate_selection.py
 
 ## Aprire dashboard
 

@@ -17,7 +17,7 @@ from src.backtesting.backtester import BacktestConfig, BacktestResult, run_backt
 from src.backtesting.metrics import BacktestMetrics, calculate_metrics, metrics_to_dict
 from src.strategy.rules import StrategyConfig
 from src.strategy.signals import TradingSignal
-from src.strategy_lab import strategy_v50_candidates
+from src.strategy_lab import strategy_v50_candidates, strategy_v50_proxy_candidate
 
 
 DEFAULT_V50_STRESS_TEST_PATH = Path("reports/strategy_lab/v50_stress_test.csv")
@@ -25,6 +25,7 @@ FINAL_CANDIDATE_GENERATORS = {
     strategy_v50_candidates.FINAL_LOW_RISK_STRATEGY_NAME: strategy_v50_candidates.generate_final_low_risk_signal,
     strategy_v50_candidates.FINAL_BALANCED_STRATEGY_NAME: strategy_v50_candidates.generate_final_balanced_signal,
     strategy_v50_candidates.FINAL_GROWTH_STRATEGY_NAME: strategy_v50_candidates.generate_final_growth_signal,
+    strategy_v50_proxy_candidate.STRATEGY_NAME: strategy_v50_proxy_candidate.generate_signal,
 }
 STRESS_TEST_COLUMNS = [
     "strategy_name",

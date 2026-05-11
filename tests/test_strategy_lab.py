@@ -13,6 +13,7 @@ from src.strategy_lab import (
     strategy_v6,
     strategy_v50_candidates,
     strategy_v50_pine,
+    strategy_v50_proxy_candidate,
 )
 from src.strategy_lab.lab import COMPARISON_FILENAME, get_default_strategy_specs, run_strategy_lab
 
@@ -214,6 +215,7 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
         "v50_final_low_risk_strategy",
         "v50_final_balanced_strategy",
         "v50_final_growth_strategy",
+        "v50_proxy_balanced_candidate",
         "v50_pine_mtf_strategy",
     }
     saved = pd.read_csv(tmp_path / COMPARISON_FILENAME)
@@ -224,9 +226,11 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
     assert result.report_path.exists()
     assert set(result.comparison["strategy_name"]) == expected_names
     assert set(saved["strategy_name"]) == expected_names
-    assert len(get_default_strategy_specs()) == 14
+    assert len(get_default_strategy_specs()) == 15
     assert "net_profit" in saved.columns
     assert "max_drawdown" in saved.columns
+    assert "profit_drawdown_ratio" in saved.columns
+    assert "average_trades_per_day" in saved.columns
     assert strict_row["risk_per_trade"] == 0.0025
     assert strict_row["min_risk_reward"] == 2.0
     assert strict_row["allowed_sessions"] == "Off Session"
@@ -281,6 +285,7 @@ def test_strategy_lab_research_only_without_live_or_api_references():
         "src/strategy_lab/strategy_v5.py",
         "src/strategy_lab/strategy_v6.py",
         "src/strategy_lab/strategy_v50_candidates.py",
+        "src/strategy_lab/strategy_v50_proxy_candidate.py",
         "src/strategy_lab/strategy_v50_pine.py",
         "src/strategy_lab/v50_edge_filters.py",
         "src/strategy_lab/v50_mtf_features.py",
@@ -304,6 +309,7 @@ def test_strategy_lab_includes_v50_pine_candidate():
     assert strategy_v50_pine.STRATEGY_NAME in names
     assert set(strategy_v50_candidates.OFFICIAL_CANDIDATE_STRATEGY_NAMES).issubset(names)
     assert set(strategy_v50_candidates.FINAL_CANDIDATE_STRATEGY_NAMES).issubset(names)
+    assert strategy_v50_proxy_candidate.STRATEGY_NAME in names
     assert strategy_v50_pine.MTF_STRATEGY_NAME in names
 
 

@@ -21,7 +21,6 @@ from src.strategy_lab import strategy_v50_pine
 from src.strategy_lab.strategy_v50_candidates import FINAL_BALANCED_STRATEGY_NAME
 from src.strategy_lab.v50_daily_coverage import build_daily_breakdown, build_daily_coverage_report
 from src.strategy_lab.v50_fast_loss_proxies import validate_no_leakage_columns
-from src.strategy_lab.v50_stress_test import StressScenario, apply_trade_stress
 
 
 DEFAULT_REALTIME_LOSS_PROXY_SWEEP_PATH = Path("reports/strategy_lab/v50_realtime_loss_proxy_sweep.csv")
@@ -192,6 +191,8 @@ def run_realtime_loss_proxy_stress(
     show_progress: bool = False,
 ) -> pd.DataFrame:
     """Run stress scenarios on the best five realtime-safe proxy variants."""
+    from src.strategy_lab.v50_stress_test import StressScenario, apply_trade_stress
+
     if strategy_config is None:
         strategy_config = StrategyConfig()
     if backtest_config is None:

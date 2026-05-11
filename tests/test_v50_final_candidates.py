@@ -5,7 +5,7 @@ import pandas as pd
 from src.settings import load_yaml_config
 from src.strategy.rules import StrategyConfig
 from src.strategy.signals import TradingSignal
-from src.strategy_lab import strategy_v50_candidates, v50_edge_filters
+from src.strategy_lab import strategy_v50_candidates, strategy_v50_proxy_candidate, v50_edge_filters
 from src.strategy_lab.lab import get_default_strategy_specs
 
 
@@ -109,14 +109,17 @@ def test_final_candidates_research_only_and_live_mode_default_false():
     config = load_yaml_config()
     checked_files = [
         Path("src/strategy_lab/strategy_v50_candidates.py"),
+        Path("src/strategy_lab/strategy_v50_proxy_candidate.py"),
         Path("src/strategy_lab/v50_stress_test.py"),
         Path("src/strategy_lab/v50_monte_carlo.py"),
         Path("scripts/run_v50_stress_test.py"),
         Path("scripts/run_v50_monte_carlo.py"),
         Path("scripts/analyze_v50_final_selection.py"),
+        Path("scripts/analyze_v50_proxy_candidate_selection.py"),
     ]
 
     assert config["trading"]["live_mode"] is False
+    assert strategy_v50_proxy_candidate.STRATEGY_NAME in strategy_v50_candidates.FINAL_CANDIDATE_STRATEGY_NAMES
     for path in checked_files:
         source = path.read_text(encoding="utf-8")
         assert "live_broker" not in source
