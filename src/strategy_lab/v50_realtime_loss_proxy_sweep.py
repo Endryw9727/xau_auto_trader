@@ -91,6 +91,7 @@ class RealtimeLossProxyVariant:
     blocked_score_buckets: tuple[str, ...] = ()
     blocked_score_bucket_hours: tuple[tuple[str, tuple[int, ...]], ...] = ()
     blocked_side_sessions: tuple[tuple[str, str], ...] = ()
+    session_side_min_scores: tuple[tuple[str, str, float], ...] = ()
     low_score_session_blocks: tuple[tuple[str, float], ...] = ()
     low_score_hour_blocks: tuple[tuple[tuple[int, ...], float], ...] = ()
 
@@ -403,6 +404,9 @@ def _threshold_for_side(row: pd.Series, side: str, variant: RealtimeLossProxyVar
         threshold = variant.short_min_score
 
     session = _session(row)
+    for session_name, session_side, session_side_threshold in variant.session_side_min_scores:
+        if session == session_name and side == session_side:
+            threshold = max(threshold, session_side_threshold)
     for session_name, session_threshold in variant.session_min_scores:
         if session == session_name:
             threshold = max(threshold, session_threshold)
@@ -584,6 +588,7 @@ def _variant_values(variant: RealtimeLossProxyVariant) -> list[object]:
         variant.blocked_score_buckets,
         variant.blocked_score_bucket_hours,
         variant.blocked_side_sessions,
+        variant.session_side_min_scores,
         variant.low_score_session_blocks,
         variant.low_score_hour_blocks,
     ]
