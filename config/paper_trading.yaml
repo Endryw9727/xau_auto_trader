@@ -1,0 +1,26 @@
+strategy_name: proxy_hardened_no_worst_hours
+backup_strategy: proxy_hardened_no_worst_hours_high_margin
+symbol: XAUUSD
+base_timeframe: 15m
+live_mode: false
+paper_mode: true
+
+initial_equity: 1000
+min_lot: 0.01
+lot_step: 0.01
+equity_step: 1000
+max_lot: 0.10
+
+commission_per_001_lot_per_side: 0.04
+spread_pips: 0.0
+slippage_pips: 0.0
+conservative_slippage_pips: 0.1
+
+max_trades_per_day: 2
+max_daily_loss_pct: 3.0
+max_consecutive_losses_day: 2
+max_consecutive_losses_total_warning: 8
+max_drawdown_warning_pct: 8
+max_drawdown_stop_pct: 12
+min_score_required: 72.0
+no_trade_after_daily_stop: true
