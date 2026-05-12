@@ -202,6 +202,7 @@ class AxiSizingConfig:
     lot_step: float = 0.01
     equity_step_eur: float = 1000.0
     max_lot: float | None = 0.10
+    eur_per_price_point_per_001_lot: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -653,6 +654,11 @@ def estimate_trade_cost(
         return pd.Series([spread_cost + slippage_cost + commission_cost] * len(trades), index=trades.index)
     spread_cost, slippage_cost, commission_cost = _legacy_cost_components(trades, profile, value_per_point)
     return (spread_cost + slippage_cost + commission_cost).astype(float)
+
+
+def axi_cost_components_for_lot(profile: CostProfile, lot: float) -> tuple[float, float, float]:
+    """Return spread, slippage and commission costs for one Axi lot size."""
+    return _axi_cost_components_for_lot(profile, lot)
 
 
 def round_turn_cost_points(profile: CostProfile) -> float:
