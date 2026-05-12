@@ -1,0 +1,2 @@
+strategy_name,validation_status,allow_live,ready_for_demo,ready_for_micro_live,paper_days,total_trades,profit_factor_total,profit_factor_last_50,max_drawdown_pct,max_consecutive_losses,max_trades_per_day_observed,fail_reasons,observation_reasons
+proxy_hardened_no_worst_hours,non pronto,False,False,False,1316,860,1.4029252734987274,1.039824203718481,10.033159339081424,10,2,PF ultime 50 1.04 < 1.05,drawdown massimo 10.03% > warning 8.00%; max loss consecutive 10 > 8; allow_live=false: nessuna attivazione automatica
