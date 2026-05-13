@@ -58,10 +58,17 @@ Before starting:
 python scripts/paper_preflight_check.py
 ```
 
+During the session, after each newly closed local candle:
+
+```bash
+python scripts/run_paper_forward_once.py
+```
+
 After the paper session:
 
 ```bash
 python scripts/paper_end_of_day_report.py
+python scripts/paper_forward_status.py
 python scripts/paper_daily_report.py
 python scripts/check_paper_validation_status.py
 ```
