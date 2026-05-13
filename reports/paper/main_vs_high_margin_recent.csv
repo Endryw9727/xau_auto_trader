@@ -1,0 +1,3 @@
+strategy_name,profit_factor_total,profit_factor_last_30,profit_factor_last_50,profit_factor_last_year,max_drawdown_pct,max_loss_streak,current_loss_streak,trades_per_day,ending_equity,total_trades,avoids_recent_degradation_vs_main,reduces_loss_streak_vs_main
+proxy_hardened_no_worst_hours,1.4029252734987274,1.05401507162205,1.039824203718481,1.4500842401114669,10.033159339081424,10,0,0.6534954407294833,2759.44857790347,860,False,False
+proxy_hardened_no_worst_hours_high_margin,1.408986061059531,1.4972963516457707,1.6608702796881896,1.5742802196004289,7.47267231855465,10,0,0.5167173252279635,2134.0510286860504,680,True,False

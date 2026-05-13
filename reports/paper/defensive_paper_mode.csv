@@ -1,0 +1,2 @@
+strategy_name,recommended_mode,recommended_strategy,paper_trade_allowed,reason,profit_factor_last_50,max_drawdown_pct,current_loss_streak,max_loss_streak,allow_live
+proxy_hardened_no_worst_hours,DEFENSIVE,proxy_hardened_no_worst_hours_high_margin,True,PF ultime 50 1.04 tra 1.00 e 1.10; DD 10.03% tra 8% e 12%,1.039824203718481,10.033159339081424,0,10,False
