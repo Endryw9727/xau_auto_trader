@@ -31,6 +31,21 @@ def main() -> None:
 
     checks = run_preflight_checks()
     failed = [item for item in checks if not item["passed"]]
+    freshness_check = next((item for item in checks if item["name"] == "data_freshness"), None)
+    failed_without_freshness = [item for item in failed if item["name"] != "data_freshness"]
+
+    if freshness_check and freshness_check.get("status") == "STALE" and not failed_without_freshness:
+        print("")
+        print("System status: WARNING")
+        print("Strategy: proxy_hardened_no_worst_hours_high_margin")
+        print("Signal: PAUSE")
+        print("Reason: DATA_STALE")
+        print(f"Data freshness: {freshness_check['detail']}")
+        print("Next action: update local XAUUSD data before paper-forward.")
+        print("")
+        print("No live trading was enabled. allow_live remains false.")
+        return
+
     if failed:
         print("")
         print("Preflight status: FAIL")
@@ -39,6 +54,10 @@ def main() -> None:
         print("Decision: STOP")
         print("Next action: resolve preflight failures before paper-forward.")
         return
+
+    if freshness_check and freshness_check.get("status") == "WARNING":
+        print("")
+        print(f"Data freshness warning: {freshness_check['detail']}")
 
     if not RAW_DATA_PATH.exists():
         print(f"CSV file not found: {RAW_DATA_PATH}")

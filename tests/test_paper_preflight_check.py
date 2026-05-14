@@ -3,8 +3,7 @@ from dataclasses import replace
 import pandas as pd
 
 from scripts import paper_preflight_check as script
-from src.paper.paper_candidate import load_paper_candidate_config
-from src.paper.paper_engine import load_paper_trading_config
+from src.market_data.data_freshness import DataFreshnessReport
 
 
 def make_monitor(status: str = "OK") -> pd.DataFrame:
@@ -20,6 +19,26 @@ def make_monitor(status: str = "OK") -> pd.DataFrame:
     )
 
 
+def make_freshness(status: str = "OK") -> DataFreshnessReport:
+    return DataFreshnessReport(
+        symbol="XAUUSD",
+        path="data/raw/xauusd.csv",
+        status=status,
+        latest_timestamp=pd.Timestamp("2026-05-14 10:00"),
+        timeframe_minutes=15.0,
+        timeframe="15m",
+        row_count=10,
+        gap_count=0,
+        missing_candles=0,
+        max_gap_minutes=0.0,
+        age_minutes=10.0,
+        missing_expected_candle=False,
+        market_open=True,
+        checked_at=pd.Timestamp("2026-05-14 10:10"),
+        error="",
+    )
+
+
 def test_run_preflight_checks_passes_with_safe_config(monkeypatch, tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text("trading:\n  live_mode: false\n", encoding="utf-8")
@@ -31,6 +50,8 @@ def test_run_preflight_checks_passes_with_safe_config(monkeypatch, tmp_path):
     monkeypatch.setenv("LIVE_MODE", "false")
     monkeypatch.setattr(script, "load_paper_reports", lambda: object())
     monkeypatch.setattr(script, "build_monitor_summary", lambda _reports, strategy_name: make_monitor("OK"))
+    monkeypatch.setattr(script, "analyze_data_freshness", lambda *_args, **_kwargs: make_freshness("OK"))
+    monkeypatch.setattr(script, "append_freshness_log", lambda _report: None)
 
     checks = script.run_preflight_checks()
 
@@ -47,6 +68,8 @@ def test_run_preflight_checks_fails_on_stop_monitor(monkeypatch, tmp_path):
     monkeypatch.setattr(script, "DEFAULT_PAPER_OUTPUT_DIR", reports_dir)
     monkeypatch.setattr(script, "load_paper_reports", lambda: object())
     monkeypatch.setattr(script, "build_monitor_summary", lambda _reports, strategy_name: make_monitor("STOP"))
+    monkeypatch.setattr(script, "analyze_data_freshness", lambda *_args, **_kwargs: make_freshness("OK"))
+    monkeypatch.setattr(script, "append_freshness_log", lambda _report: None)
 
     checks = script.run_preflight_checks()
 

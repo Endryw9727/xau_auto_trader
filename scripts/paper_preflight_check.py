@@ -16,12 +16,14 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.market_data.data_freshness import analyze_data_freshness, append_freshness_log, format_freshness_detail
 from src.paper.paper_candidate import PAPER_MAIN_STRATEGY, load_paper_candidate_config
 from src.paper.paper_engine import DEFAULT_PAPER_OUTPUT_DIR, load_paper_trading_config
 from src.paper.paper_monitor import build_monitor_summary, load_paper_reports
 
 
 CONFIG_PATH = Path("config.yaml")
+RAW_DATA_PATH = Path("data/raw/xauusd.csv")
 
 
 def main() -> None:
@@ -38,6 +40,8 @@ def main() -> None:
 
     print("")
     print(f"Preflight status: {status}")
+    if any(item["name"] == "data_freshness" and item.get("status") == "WARNING" for item in checks):
+        print("WARNING: local market data is old; paper-forward can continue only with caution.")
     if any(item["name"] == "monitor_status" and "WARNING" in item["detail"] for item in checks):
         print("WARNING: paper can continue only with extra prudence.")
     if status == "FAIL":
@@ -63,6 +67,16 @@ def run_preflight_checks() -> list[dict]:
     checks.append(check("broker_not_active", True, "no broker connector/API is used by paper scripts"))
     checks.append(check("env_not_required", True, ".env is not required for paper preflight"))
     checks.append(check("paper_reports_dir", DEFAULT_PAPER_OUTPUT_DIR.exists(), f"{DEFAULT_PAPER_OUTPUT_DIR} exists"))
+    freshness = analyze_data_freshness(RAW_DATA_PATH, symbol=paper_config.symbol)
+    append_freshness_log(freshness)
+    checks.append(
+        check(
+            "data_freshness",
+            freshness.status in {"OK", "WARNING"},
+            format_freshness_detail(freshness),
+            status=freshness.status,
+        )
+    )
 
     try:
         reports = load_paper_reports()
@@ -77,9 +91,9 @@ def run_preflight_checks() -> list[dict]:
     return checks
 
 
-def check(name: str, passed: bool, detail: str) -> dict:
+def check(name: str, passed: bool, detail: str, **extra) -> dict:
     """Build one check row."""
-    return {"name": name, "passed": bool(passed), "detail": detail}
+    return {"name": name, "passed": bool(passed), "detail": detail, **extra}
 
 
 def load_yaml(path: Path) -> dict:
