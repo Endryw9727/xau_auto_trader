@@ -184,6 +184,30 @@ promossa automaticamente.
     python scripts/run_v50_monte_carlo.py
     python scripts/analyze_v50_proxy_candidate_selection.py
 
+## Long-term modular architecture
+
+La direzione architetturale di lungo periodo resta modulare e paper-first:
+
+- Market Data Layer per XAUUSD, multi-timeframe, freshness check e futura
+  qualita dati DXY/US10Y/news.
+- Technical Strategy Layer per segnali, score, sessioni, SL/TP e filtri della
+  strategia paper congelata.
+- Macro Fundamental Layer per contesto DXY, rendimenti USA, risk sentiment e
+  calendario high impact.
+- AI Reasoning Layer solo consulenziale: puo spiegare, segnalare warning o
+  supportare un blocco, ma non puo aprire ordini.
+- Risk Engine sempre obbligatorio prima di qualsiasi decisione paper-forward.
+- Paper Forward Layer per validazione locale, registro trade simulati, equity e
+  status.
+- Monitoring/Telegram Layer futuro solo per report e notifiche.
+- Execution Layer futuro disattivato: nessun live trading, nessun broker reale,
+  nessuna API key, `LIVE_MODE=false` e `allow_live=false` fino a validazione e
+  approvazione manuale esplicita.
+
+La blueprint completa e in:
+
+    docs/system_architecture_blueprint.md
+
 ## Aprire dashboard
 
     streamlit run src/dashboard/dashboard.py
