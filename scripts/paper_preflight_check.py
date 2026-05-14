@@ -18,6 +18,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.broker.demo_broker_readonly import DEFAULT_DEMO_BROKER_CONFIG_PATH, load_demo_broker_config
 from src.market_data.data_freshness import analyze_data_freshness, append_freshness_log, format_freshness_detail
+from src.market_data.mt5_readonly_data_updater import (
+    DEFAULT_MARKET_DATA_CONFIG_PATH,
+    load_market_data_config,
+    update_market_data_from_mt5_readonly,
+)
 from src.paper.paper_candidate import PAPER_MAIN_STRATEGY, load_paper_candidate_config
 from src.paper.paper_engine import DEFAULT_PAPER_OUTPUT_DIR, load_paper_trading_config
 from src.paper.paper_monitor import build_monitor_summary, load_paper_reports
@@ -83,6 +88,7 @@ def run_preflight_checks() -> list[dict]:
     checks.append(check("env_not_required", True, ".env is not required for paper preflight"))
     checks.append(check("paper_reports_dir", DEFAULT_PAPER_OUTPUT_DIR.exists(), f"{DEFAULT_PAPER_OUTPUT_DIR} exists"))
     checks.append(check_demo_broker_readonly_config(DEFAULT_DEMO_BROKER_CONFIG_PATH))
+    checks.append(check_market_data_auto_update(DEFAULT_MARKET_DATA_CONFIG_PATH))
     freshness = analyze_data_freshness(RAW_DATA_PATH, symbol=paper_config.symbol)
     append_freshness_log(freshness)
     checks.append(
@@ -125,6 +131,31 @@ def check_demo_broker_readonly_config(path: Path) -> dict:
             f"execution_enabled={config.execution_enabled}; MT5 connection optional"
         ),
         status="OK",
+    )
+
+
+def check_market_data_auto_update(path: Path) -> dict:
+    """Optionally run read-only MT5 data update before freshness checks."""
+    if not path.exists():
+        return check("market_data_auto_update", True, "config/market_data.yaml not configured; skipped")
+
+    try:
+        config = load_market_data_config(path)
+    except Exception as exc:
+        return check("market_data_auto_update", False, str(exc), status="ERROR")
+
+    if not config.auto_update_data:
+        return check("market_data_auto_update", True, "auto_update_data=false; read-only update skipped", status="SKIPPED")
+
+    results = update_market_data_from_mt5_readonly(market_config_path=path)
+    statuses = sorted({result.status for result in results})
+    added_rows = sum(result.added_rows for result in results)
+    failed = any(status == "ERROR" for status in statuses)
+    return check(
+        "market_data_auto_update",
+        not failed,
+        f"auto_update_data=true; statuses={statuses}; added_rows={added_rows}",
+        status="ERROR" if failed else "OK",
     )
 
 

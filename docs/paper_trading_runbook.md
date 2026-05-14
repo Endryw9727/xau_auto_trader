@@ -113,6 +113,31 @@ If data is `STALE`, update the local XAUUSD CSV first, rerun:
 
 Then run preflight again before any paper-forward evaluation.
 
+## Updating Market Data From MT5 Read-Only
+
+Local candle updates may be pulled from a locally available MetaTrader 5 demo
+terminal only in read-only mode. The updater validates `demo_only: true`,
+`allow_live: false`, and `execution_enabled: false` before touching local CSV
+files. It does not open demo trades, real trades, or broker orders.
+
+Default behavior is conservative:
+
+- `config/market_data.yaml` keeps `auto_update_data: false`.
+- Preflight will not update market data automatically unless that flag is
+  changed intentionally in a future controlled test.
+- If MT5 is not installed or not connected, the updater reports
+  `MT5_NOT_AVAILABLE` and leaves existing CSV files unchanged.
+- Freshness must still be verified after any update.
+
+Manual update routine:
+
+```bash
+.venv/bin/python scripts/update_market_data_mt5_readonly.py
+.venv/bin/python scripts/check_data_freshness.py
+.venv/bin/python scripts/paper_preflight_check.py
+.venv/bin/python scripts/run_paper_forward_once.py
+```
+
 ## Demo Broker Read-Only Phase
 
 The demo broker phase is read-only. It may inspect an Axi/MetaTrader demo

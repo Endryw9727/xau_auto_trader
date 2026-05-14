@@ -1,0 +1,17 @@
+symbol: XAUUSD
+source: mt5_demo_readonly
+auto_update_data: false
+timeframes:
+  - M1
+  - M5
+  - M15
+  - M30
+  - H1
+  - H4
+max_bars:
+  M1: 100000
+  M5: 100000
+  M15: 100000
+  M30: 50000
+  H1: 20000
+  H4: 10000
