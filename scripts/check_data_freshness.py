@@ -40,6 +40,7 @@ def main() -> None:
     print(f"Gaps found: {report.gap_count}")
     print(f"Missing candles: {report.missing_candles}")
     print(f"Missing expected candle: {report.missing_expected_candle}")
+    print(f"Reason: {report.reason}")
     if report.error:
         print(f"Error: {report.error}")
     print(f"Status: {report.status}")

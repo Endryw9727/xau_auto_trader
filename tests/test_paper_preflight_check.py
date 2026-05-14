@@ -24,6 +24,7 @@ def make_freshness(status: str = "OK") -> DataFreshnessReport:
         symbol="XAUUSD",
         path="data/raw/xauusd.csv",
         status=status,
+        reason="fresh enough" if status == "OK" else "test freshness reason",
         latest_timestamp=pd.Timestamp("2026-05-14 10:00"),
         timeframe_minutes=15.0,
         timeframe="15m",

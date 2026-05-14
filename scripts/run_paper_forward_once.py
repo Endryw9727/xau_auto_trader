@@ -16,7 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.paper_preflight_check import run_preflight_checks
 from src.data_feed.market_data import load_csv_data
-from src.paper.paper_forward_engine import run_paper_forward_once
+from src.paper.paper_forward_engine import record_paper_forward_pause, run_paper_forward_once
 
 
 RAW_DATA_PATH = Path("data/raw/xauusd.csv")
@@ -34,14 +34,20 @@ def main() -> None:
     freshness_check = next((item for item in checks if item["name"] == "data_freshness"), None)
     failed_without_freshness = [item for item in failed if item["name"] != "data_freshness"]
 
-    if freshness_check and freshness_check.get("status") == "STALE" and not failed_without_freshness:
+    if freshness_check and freshness_check.get("status") in {"STALE", "ERROR"} and not failed_without_freshness:
+        reason_code = "DATA_ERROR" if freshness_check.get("status") == "ERROR" else "DATA_STALE"
+        result = record_paper_forward_pause(reason_code)
         print("")
-        print("System status: WARNING")
-        print("Strategy: proxy_hardened_no_worst_hours_high_margin")
-        print("Signal: PAUSE")
-        print("Reason: DATA_STALE")
+        print(f"System status: {result.status}")
+        print(f"Strategy: {result.strategy_name}")
+        print(f"Signal: {result.decision}")
+        print(f"Reason: {result.reason}")
         print(f"Data freshness: {freshness_check['detail']}")
-        print("Next action: update local XAUUSD data before paper-forward.")
+        print(f"Paper equity: {result.equity:.2f} EUR")
+        print(f"Paper DD: {result.drawdown_pct:.2f}%")
+        print(f"Open paper trades: {result.open_trades}")
+        print(f"Daily loss: {result.daily_loss_pct:.2f}%")
+        print(f"Next action: {result.next_action}")
         print("")
         print("No live trading was enabled. allow_live remains false.")
         return

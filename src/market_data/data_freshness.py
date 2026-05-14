@@ -23,6 +23,7 @@ FRESHNESS_LOG_COLUMNS = [
     "symbol",
     "path",
     "status",
+    "reason",
     "timeframe",
     "timeframe_minutes",
     "latest_timestamp",
@@ -44,6 +45,7 @@ class DataFreshnessReport:
     symbol: str
     path: str
     status: str
+    reason: str
     latest_timestamp: pd.Timestamp | None
     timeframe_minutes: float | None
     timeframe: str
@@ -126,6 +128,9 @@ def analyze_dataframe_freshness(
         return error_report(symbol, csv_path, checked_at, "timestamp invalid")
 
     detected_minutes = detect_timeframe_minutes(index)
+    if detected_minutes is None:
+        return error_report(symbol, csv_path, checked_at, "timeframe not detectable")
+
     timeframe_minutes = float(expected_timeframe_minutes or detected_minutes or 0)
     if timeframe_minutes <= 0:
         timeframe_minutes = float(detected_minutes or 0)
@@ -149,11 +154,20 @@ def analyze_dataframe_freshness(
         warning_age_minutes=warning_age_minutes,
         closed_market_max_age_minutes=closed_market_max_age_minutes,
     )
+    reason = freshness_reason(
+        status,
+        age_minutes,
+        market_open=market_open,
+        ok_age_minutes=ok_age_minutes,
+        warning_age_minutes=warning_age_minutes,
+        closed_market_max_age_minutes=closed_market_max_age_minutes,
+    )
 
     return DataFreshnessReport(
         symbol=symbol,
         path=str(csv_path),
         status=status,
+        reason=reason,
         latest_timestamp=latest,
         timeframe_minutes=timeframe_minutes or None,
         timeframe=timeframe,
@@ -228,6 +242,35 @@ def classify_freshness_status(
     return "OK"
 
 
+def freshness_reason(
+    status: str,
+    age_minutes: float | None,
+    *,
+    market_open: bool,
+    ok_age_minutes: float = 30.0,
+    warning_age_minutes: float = 90.0,
+    closed_market_max_age_minutes: float = 3 * 24 * 60.0,
+) -> str:
+    """Return a human-readable reason for the freshness status."""
+    if status == "ERROR" or age_minutes is None:
+        return "data freshness could not be evaluated"
+    market_label = "market open" if market_open else "market closed"
+    if market_open:
+        if status == "OK":
+            return f"latest candle age {age_minutes:.1f} min <= {ok_age_minutes:.1f} min while {market_label}"
+        if status == "WARNING":
+            return (
+                f"latest candle age {age_minutes:.1f} min is between "
+                f"{ok_age_minutes:.1f} and {warning_age_minutes:.1f} min while {market_label}"
+            )
+        return f"latest candle age {age_minutes:.1f} min > {warning_age_minutes:.1f} min while {market_label}"
+    if status == "STALE":
+        return f"latest candle age {age_minutes:.1f} min > {closed_market_max_age_minutes:.1f} min while {market_label}"
+    if status == "WARNING":
+        return f"latest candle age {age_minutes:.1f} min is old while {market_label}"
+    return f"latest candle age {age_minutes:.1f} min is acceptable while {market_label}"
+
+
 def is_market_open(now: pd.Timestamp) -> bool:
     """
     Approximate XAUUSD market-open status for freshness checks.
@@ -272,6 +315,7 @@ def report_to_row(report: DataFreshnessReport) -> dict:
         "symbol": report.symbol,
         "path": report.path,
         "status": report.status,
+        "reason": report.reason,
         "timeframe": report.timeframe,
         "timeframe_minutes": report.timeframe_minutes,
         "latest_timestamp": _timestamp_to_string(report.latest_timestamp),
@@ -289,12 +333,13 @@ def report_to_row(report: DataFreshnessReport) -> dict:
 def format_freshness_detail(report: DataFreshnessReport) -> str:
     """Return a compact preflight/script detail string."""
     if report.status == "ERROR":
-        return f"ERROR: {report.error}"
+        return f"ERROR: {report.reason}"
     latest = _timestamp_to_string(report.latest_timestamp)
     age = "n/a" if report.age_minutes is None else f"{report.age_minutes:.1f} min"
     return (
         f"{report.status}: last={latest}, age={age}, timeframe={report.timeframe}, "
-        f"rows={report.row_count}, gaps={report.gap_count}, missing_expected={report.missing_expected_candle}"
+        f"rows={report.row_count}, gaps={report.gap_count}, missing_expected={report.missing_expected_candle}, "
+        f"reason={report.reason}"
     )
 
 
@@ -314,6 +359,7 @@ def error_report(symbol: str, path: Path, checked_at: pd.Timestamp, message: str
         symbol=symbol,
         path=str(path),
         status="ERROR",
+        reason=message,
         latest_timestamp=None,
         timeframe_minutes=None,
         timeframe="unknown",

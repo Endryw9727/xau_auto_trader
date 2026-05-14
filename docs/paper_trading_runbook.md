@@ -58,6 +58,12 @@ Before starting:
 python scripts/paper_preflight_check.py
 ```
 
+Check local data freshness when preparing a paper-forward session:
+
+```bash
+.venv/bin/python scripts/check_data_freshness.py
+```
+
 During the session, after each newly closed local candle:
 
 ```bash
@@ -82,6 +88,54 @@ Also review:
 - daily and weekly loss
 - current loss streak
 - whether status is `OK`, `WARNING`, or `STOP`
+
+## Data Freshness Rules
+
+Fresh local XAUUSD data is mandatory because paper-forward evaluates the latest
+closed candle. If the local CSV is stale, the strategy would be reasoning on an
+old market state, so new paper trades must be paused.
+
+Freshness states:
+
+- `OK`: latest 15m candle is within `30` minutes.
+- `WARNING`: latest 15m candle is older than `30` minutes and up to `90`
+  minutes. Continue only with controlled caution.
+- `STALE`: latest 15m candle is older than `90` minutes. The system goes to
+  `PAUSE` and must not generate a new paper trade.
+- `ERROR`: file missing, empty data, invalid timestamps, or timeframe not
+  detectable. The system goes to `PAUSE` with `DATA_ERROR`.
+
+If data is `STALE`, update the local XAUUSD CSV first, rerun:
+
+```bash
+.venv/bin/python scripts/check_data_freshness.py
+```
+
+Then run preflight again before any paper-forward evaluation.
+
+## Demo Broker Read-Only Phase
+
+The demo broker phase is read-only. It may inspect an Axi/MetaTrader demo
+account later, but it must not open demo trades, real trades, or any broker
+orders.
+
+Current rules:
+
+- `config/demo_broker.yaml` must keep `demo_only: true`.
+- `allow_live` must stay `false`.
+- `execution_enabled` must stay `false`.
+- MT5 connectivity is optional in this phase; if it is not configured, the
+  check runs in `MT5_NOT_CONNECTED_MOCK_ONLY` mode.
+- This phase is only for comparing local paper data with broker-side account,
+  symbol, spread, and position snapshots.
+- Demo execution can be discussed only in a separate future phase.
+- Real live trading remains forbidden.
+
+Check the read-only demo broker guardrails with:
+
+```bash
+.venv/bin/python scripts/check_demo_broker_readonly.py
+```
 
 ## Stop Paper Immediately
 

@@ -30,6 +30,7 @@ def test_analyze_data_freshness_ok_for_recent_15m_csv(tmp_path):
     assert report.row_count == 5
     assert report.age_minutes == 5.0
     assert report.gap_count == 0
+    assert report.reason
 
 
 def test_analyze_data_freshness_warning_and_stale(tmp_path):
@@ -42,6 +43,7 @@ def test_analyze_data_freshness_warning_and_stale(tmp_path):
 
     assert warning.status == "WARNING"
     assert stale.status == "STALE"
+    assert ">" in stale.reason
     assert stale.missing_expected_candle is True
 
 
@@ -66,6 +68,17 @@ def test_missing_file_returns_error(tmp_path):
 
     assert report.status == "ERROR"
     assert "missing" in report.error
+    assert "missing" in report.reason
+
+
+def test_single_timestamp_returns_error_for_undetectable_timeframe(tmp_path):
+    path = tmp_path / "xauusd.csv"
+    write_ohlcv(path, [pd.Timestamp("2026-05-14 09:00")])
+
+    report = analyze_data_freshness(path, now=pd.Timestamp("2026-05-14 09:05"))
+
+    assert report.status == "ERROR"
+    assert "timeframe" in report.reason
 
 
 def test_freshness_log_is_exported(tmp_path):
@@ -81,6 +94,7 @@ def test_freshness_log_is_exported(tmp_path):
     assert log_path.exists()
     assert exported.iloc[0]["status"] == "OK"
     assert exported.iloc[0]["symbol"] == "XAUUSD"
+    assert "reason" in exported.columns
 
 
 def test_helpers_classify_timeframe_and_status():

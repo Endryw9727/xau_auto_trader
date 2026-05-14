@@ -10,6 +10,7 @@ from src.paper.paper_forward_engine import (
     calculate_forward_state,
     ensure_forward_files,
     load_forward_tables,
+    record_paper_forward_pause,
     run_paper_forward_once,
 )
 from src.strategy.signals import TradingSignal
@@ -256,3 +257,23 @@ def test_forward_state_stops_on_daily_loss(tmp_path):
 
     assert state["status"] == "STOP"
     assert state["daily_loss_pct"] > 3.0
+
+
+def test_record_paper_forward_pause_writes_reason_to_logs(tmp_path):
+    candidate_path, paper_path = write_configs(tmp_path)
+    output_dir = tmp_path / "forward"
+
+    result = record_paper_forward_pause(
+        "DATA_STALE",
+        output_dir=output_dir,
+        candidate_config_path=candidate_path,
+        paper_config_path=paper_path,
+        now=pd.Timestamp("2026-05-15 10:00"),
+    )
+    tables = load_forward_tables(output_dir)
+
+    assert result.decision == "PAUSE"
+    assert result.reason == "DATA_STALE"
+    assert tables.signals.iloc[-1]["reason"] == "DATA_STALE"
+    assert tables.daily_log.iloc[-1]["reason"] == "DATA_STALE"
+    assert str(tables.signals.iloc[-1]["allow_live"]).lower() == "false"

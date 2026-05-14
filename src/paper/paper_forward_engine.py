@@ -637,6 +637,43 @@ def build_forward_status(output_dir: str | Path = DEFAULT_FORWARD_OUTPUT_DIR) ->
     }
 
 
+def record_paper_forward_pause(
+    reason: str,
+    *,
+    output_dir: str | Path = DEFAULT_FORWARD_OUTPUT_DIR,
+    candidate_config_path: str | Path = "config/paper_candidate.yaml",
+    paper_config_path: str | Path = "config/paper_trading.yaml",
+    now: pd.Timestamp | None = None,
+) -> ForwardRunResult:
+    """Record a paper-forward PAUSE decision without evaluating strategy signals."""
+    candidate = load_paper_candidate_config(candidate_config_path)
+    paper_config = load_paper_trading_config(paper_config_path)
+    validate_forward_safety(candidate, paper_config)
+    now = pd.Timestamp.utcnow() if now is None else pd.Timestamp(now)
+    output_dir = Path(output_dir)
+    tables = load_forward_tables(output_dir)
+    equity = current_forward_equity(tables.equity, paper_config, candidate.paper_main_strategy)
+    running_high = current_running_high(tables.equity, equity)
+    state = calculate_forward_state(tables, candidate, paper_config, as_of=now)
+    state["status"] = "WARNING"
+    state["equity"] = equity
+    state["running_high"] = running_high
+    append_signal(output_dir, _signal_id(now), now, now, candidate, paper_config, "PAUSE", reason, state)
+    append_daily_log(output_dir, now, now, candidate, paper_config, "PAUSE", reason, state)
+    return ForwardRunResult(
+        status="WARNING",
+        decision="PAUSE",
+        strategy_name=candidate.paper_main_strategy,
+        reason=reason,
+        equity=float(state["equity"]),
+        drawdown_pct=float(state["drawdown_pct"]),
+        daily_loss_pct=float(state["daily_loss_pct"]),
+        open_trades=int(state["open_trades"]),
+        next_action="update local XAUUSD data before paper-forward",
+        signal_id=_signal_id(now),
+    )
+
+
 def current_forward_equity(equity_table: pd.DataFrame, paper_config: PaperTradingConfig, strategy_name: str) -> float:
     """Return latest forward equity, falling back to the validated paper summary."""
     if not equity_table.empty and "equity" in equity_table.columns:

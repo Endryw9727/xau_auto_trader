@@ -16,6 +16,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.broker.demo_broker_readonly import DEFAULT_DEMO_BROKER_CONFIG_PATH, load_demo_broker_config
 from src.market_data.data_freshness import analyze_data_freshness, append_freshness_log, format_freshness_detail
 from src.paper.paper_candidate import PAPER_MAIN_STRATEGY, load_paper_candidate_config
 from src.paper.paper_engine import DEFAULT_PAPER_OUTPUT_DIR, load_paper_trading_config
@@ -32,7 +33,7 @@ def main() -> None:
     print("XAU Auto Trader - Paper Preflight Check")
     print("=" * 72)
     checks = run_preflight_checks()
-    status = "PASS" if all(item["passed"] for item in checks) else "FAIL"
+    status = preflight_status(checks)
 
     for item in checks:
         marker = "OK" if item["passed"] else "FAIL"
@@ -44,11 +45,25 @@ def main() -> None:
         print("WARNING: local market data is old; paper-forward can continue only with caution.")
     if any(item["name"] == "monitor_status" and "WARNING" in item["detail"] for item in checks):
         print("WARNING: paper can continue only with extra prudence.")
-    if status == "FAIL":
+    if status in {"FAIL", "STALE"}:
         print("Do not start paper trading until failed checks are resolved.")
+    elif status == "WARNING":
+        print("Paper session can proceed only with controlled caution.")
     else:
         print("Paper session can proceed under controlled paper rules.")
     print("No real orders are possible from this script. allow_live remains false.")
+
+
+def preflight_status(checks: list[dict]) -> str:
+    """Return PASS, WARNING, STALE, or FAIL for the preflight report."""
+    freshness = next((item for item in checks if item["name"] == "data_freshness"), None)
+    if freshness and freshness.get("status") == "STALE":
+        return "STALE"
+    if not all(item["passed"] for item in checks):
+        return "FAIL"
+    if freshness and freshness.get("status") == "WARNING":
+        return "WARNING"
+    return "PASS"
 
 
 def run_preflight_checks() -> list[dict]:
@@ -67,6 +82,7 @@ def run_preflight_checks() -> list[dict]:
     checks.append(check("broker_not_active", True, "no broker connector/API is used by paper scripts"))
     checks.append(check("env_not_required", True, ".env is not required for paper preflight"))
     checks.append(check("paper_reports_dir", DEFAULT_PAPER_OUTPUT_DIR.exists(), f"{DEFAULT_PAPER_OUTPUT_DIR} exists"))
+    checks.append(check_demo_broker_readonly_config(DEFAULT_DEMO_BROKER_CONFIG_PATH))
     freshness = analyze_data_freshness(RAW_DATA_PATH, symbol=paper_config.symbol)
     append_freshness_log(freshness)
     checks.append(
@@ -89,6 +105,27 @@ def run_preflight_checks() -> list[dict]:
         checks.append(check("monitor_status", False, str(exc)))
 
     return checks
+
+
+def check_demo_broker_readonly_config(path: Path) -> dict:
+    """Validate optional demo broker read-only config safety."""
+    if not path.exists():
+        return check("demo_broker_readonly", True, "config/demo_broker.yaml not configured; skipped")
+
+    try:
+        config = load_demo_broker_config(path)
+    except Exception as exc:
+        return check("demo_broker_readonly", False, str(exc), status="ERROR")
+
+    return check(
+        "demo_broker_readonly",
+        True,
+        (
+            f"demo_only={config.demo_only}, allow_live={config.allow_live}, "
+            f"execution_enabled={config.execution_enabled}; MT5 connection optional"
+        ),
+        status="OK",
+    )
 
 
 def check(name: str, passed: bool, detail: str, **extra) -> dict:
