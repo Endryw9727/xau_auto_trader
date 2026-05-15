@@ -11,8 +11,8 @@ from src.settings import (
 
 
 def test_main_paths_are_defined():
-    assert str(RAW_DATA_PATH) == "data/raw/xauusd.csv"
-    assert str(REPORT_DIR) == "reports/backtests"
+    assert RAW_DATA_PATH.as_posix() == "data/raw/xauusd.csv"
+    assert REPORT_DIR.as_posix() == "reports/backtests"
 
 
 def test_main_builds_configs_from_settings():

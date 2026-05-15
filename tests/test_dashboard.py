@@ -6,9 +6,9 @@ from src.dashboard.dashboard import load_sqlite_table
 
 
 def test_dashboard_paths_are_defined():
-    assert str(TRADES_PATH) == "reports/backtests/trades.csv"
-    assert str(METRICS_PATH) == "reports/backtests/metrics.csv"
-    assert str(DATABASE_PATH) == "data/database/trading.db"
+    assert TRADES_PATH.as_posix() == "reports/backtests/trades.csv"
+    assert METRICS_PATH.as_posix() == "reports/backtests/metrics.csv"
+    assert DATABASE_PATH.as_posix() == "data/database/trading.db"
 
 
 def test_calculate_profit_factor():
