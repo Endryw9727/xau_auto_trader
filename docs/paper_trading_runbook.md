@@ -138,6 +138,32 @@ Manual update routine:
 .venv/bin/python scripts/run_paper_forward_once.py
 ```
 
+## MT5 CSV Bridge On Mac/Wine
+
+On Mac/Wine, the Python MT5 package may be unavailable even while the MT5
+terminal is running. In that case, export candles from MT5 to CSV and place the
+files in:
+
+```text
+data/mt5_bridge/input/
+```
+
+Then run:
+
+```bash
+.venv/bin/python scripts/import_mt5_csv_bridge.py
+.venv/bin/python scripts/check_data_freshness.py
+.venv/bin/python scripts/paper_preflight_check.py
+.venv/bin/python scripts/run_paper_forward_once.py
+```
+
+The bridge is local CSV import only. It does not connect to a broker, does not
+open demo or real trades, and does not enable execution. Details are in:
+
+```text
+docs/mt5_csv_bridge.md
+```
+
 ## Demo Broker Read-Only Phase
 
 The demo broker phase is read-only. It may inspect an Axi/MetaTrader demo

@@ -1,0 +1,16 @@
+enabled: true
+symbol: XAUUSD
+source: mt5_csv_bridge
+allow_live: false
+execution_enabled: false
+demo_only: true
+auto_import: false
+input_dir: data/mt5_bridge/input
+archive_dir: data/mt5_bridge/archive
+timeframes:
+  M1: xauusd_m1.csv
+  M5: xauusd_m5.csv
+  M15: xauusd_m15.csv
+  M30: xauusd_m30.csv
+  H1: xauusd_h1.csv
+  H4: xauusd_h4.csv

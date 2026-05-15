@@ -17,3 +17,17 @@ reports/paper_forward/*.csv
 reports/strategy_lab/*.csv
 reports/features/*.csv
 reports/analysis/*.csv
+data/mt5_bridge/input/*.csv
+data/mt5_bridge/archive/*.csv
+!data/mt5_bridge/input/.gitkeep
+!data/mt5_bridge/archive/.gitkeep
+
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+logs/
+reports/
+data/mt5_bridge/input/*.csv
+data/mt5_bridge/archive/*.csv

@@ -23,6 +23,7 @@ from src.market_data.mt5_readonly_data_updater import (
     load_market_data_config,
     update_market_data_from_mt5_readonly,
 )
+from src.market_data.mt5_csv_bridge import DEFAULT_MT5_CSV_BRIDGE_CONFIG_PATH, load_mt5_csv_bridge_config
 from src.paper.paper_candidate import PAPER_MAIN_STRATEGY, load_paper_candidate_config
 from src.paper.paper_engine import DEFAULT_PAPER_OUTPUT_DIR, load_paper_trading_config
 from src.paper.paper_monitor import build_monitor_summary, load_paper_reports
@@ -88,6 +89,7 @@ def run_preflight_checks() -> list[dict]:
     checks.append(check("env_not_required", True, ".env is not required for paper preflight"))
     checks.append(check("paper_reports_dir", DEFAULT_PAPER_OUTPUT_DIR.exists(), f"{DEFAULT_PAPER_OUTPUT_DIR} exists"))
     checks.append(check_demo_broker_readonly_config(DEFAULT_DEMO_BROKER_CONFIG_PATH))
+    checks.append(check_mt5_csv_bridge_config(DEFAULT_MT5_CSV_BRIDGE_CONFIG_PATH))
     checks.append(check_market_data_auto_update(DEFAULT_MARKET_DATA_CONFIG_PATH))
     freshness = analyze_data_freshness(RAW_DATA_PATH, symbol=paper_config.symbol)
     append_freshness_log(freshness)
@@ -129,6 +131,30 @@ def check_demo_broker_readonly_config(path: Path) -> dict:
         (
             f"demo_only={config.demo_only}, allow_live={config.allow_live}, "
             f"execution_enabled={config.execution_enabled}; MT5 connection optional"
+        ),
+        status="OK",
+    )
+
+
+def check_mt5_csv_bridge_config(path: Path) -> dict:
+    """Validate optional MT5 CSV bridge config without importing data."""
+    if not path.exists():
+        return check("mt5_csv_bridge", True, "config/mt5_csv_bridge.yaml not configured; skipped")
+
+    try:
+        config = load_mt5_csv_bridge_config(path)
+    except Exception as exc:
+        return check("mt5_csv_bridge", False, str(exc), status="ERROR")
+
+    if config.auto_import:
+        return check("mt5_csv_bridge", False, "auto_import=true is not allowed in paper preflight", status="ERROR")
+
+    return check(
+        "mt5_csv_bridge",
+        True,
+        (
+            f"enabled={config.enabled}, demo_only={config.demo_only}, allow_live={config.allow_live}, "
+            f"execution_enabled={config.execution_enabled}, auto_import={config.auto_import}"
         ),
         status="OK",
     )
