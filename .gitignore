@@ -31,3 +31,11 @@ logs/
 reports/
 data/mt5_bridge/input/*.csv
 data/mt5_bridge/archive/*.csv
+
+# VPS runtime/backups
+data/raw/*.bak*
+data/raw/**/*.bak*
+reports/paper_forward/*.csv
+reports/paper_forward/*.log
+reports/strategy_lab/*.csv
+scripts/force_refresh_m15_xauusd_p.py

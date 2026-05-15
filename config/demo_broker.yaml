@@ -1,9 +1,9 @@
 demo_only: true
 allow_live: false
 execution_enabled: false
-broker_name: axi_demo
+broker_name: fortune_prime_readonly
 platform: mt5
-symbol: XAUUSD
+symbol: XAUUSD-P
 max_lot: 0.01
 max_trades_per_day: 2
 max_daily_loss_pct: 3

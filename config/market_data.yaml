@@ -1,13 +1,13 @@
-symbol: XAUUSD
-source: mt5_demo_readonly
+symbol: XAUUSD-P
+source: mt5_readonly
 auto_update_data: false
 timeframes:
-  - M1
-  - M5
-  - M15
-  - M30
-  - H1
-  - H4
+- M1
+- M5
+- M15
+- M30
+- H1
+- H4
 max_bars:
   M1: 100000
   M5: 100000
