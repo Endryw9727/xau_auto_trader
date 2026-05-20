@@ -1,0 +1,15 @@
+enabled: true
+symbol: XAUUSD-P
+mode: demo_monitor
+allow_real_live: false
+allow_demo_execution: true
+telegram_enabled: false
+max_daily_loss_pct: 3.0
+max_open_positions: 1
+max_spread_points: 80
+report_interval_minutes: 15
+shadow_variants:
+  - proxy_hardened_no_worst_hours_high_margin
+  - proxy_hardened_no_worst_hours
+  - v50_proxy_balanced_candidate
+  - proxy_hardened_score_plus
