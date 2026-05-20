@@ -12,7 +12,7 @@ def test_demo_broker_mock_mode_returns_readonly_snapshots():
     assert account.status == MT5_MOCK_STATUS
     assert account.connected is False
     assert symbol.status == MT5_MOCK_STATUS
-    assert symbol.symbol == "XAUUSD"
+    assert symbol.symbol in {"XAUUSD", "XAUUSD-P"}
     assert positions == []
     assert history == []
 

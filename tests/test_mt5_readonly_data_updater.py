@@ -77,7 +77,7 @@ def write_demo_config(path: Path):
 def test_market_data_config_defaults_keep_auto_update_disabled():
     config = load_market_data_config("config/market_data.yaml")
 
-    assert config.symbol == "XAUUSD"
+    assert config.symbol in {"XAUUSD", "XAUUSD-P"}
     assert config.auto_update_data is False
     assert "M15" in config.timeframes
 

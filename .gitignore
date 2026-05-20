@@ -39,3 +39,6 @@ reports/paper_forward/*.csv
 reports/paper_forward/*.log
 reports/strategy_lab/*.csv
 scripts/force_refresh_m15_xauusd_p.py
+
+# Local VPS/demo execution override - never commit
+config/demo_execution.local.yaml

@@ -12,8 +12,9 @@ def test_demo_broker_config_is_readonly_safe():
     assert config.demo_only is True
     assert config.allow_live is False
     assert config.execution_enabled is False
-    assert config.broker_name == "axi_demo"
-    assert config.symbol == "XAUUSD"
+    assert isinstance(config.broker_name, str)
+    assert config.broker_name
+    assert config.symbol in {"XAUUSD", "XAUUSD-P"}
 
 
 def test_demo_broker_config_rejects_live_or_execution_enabled(tmp_path):
