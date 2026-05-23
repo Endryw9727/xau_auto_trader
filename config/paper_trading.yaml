@@ -1,6 +1,6 @@
 strategy_name: proxy_hardened_no_worst_hours
 backup_strategy: proxy_hardened_no_worst_hours_high_margin
-symbol: XAUUSD
+symbol: XAUUSD-P
 base_timeframe: 15m
 live_mode: false
 paper_mode: true

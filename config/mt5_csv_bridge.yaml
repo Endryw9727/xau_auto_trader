@@ -1,5 +1,5 @@
 enabled: true
-symbol: XAUUSD
+symbol: XAUUSD-P
 source: mt5_csv_bridge
 allow_live: false
 execution_enabled: false
