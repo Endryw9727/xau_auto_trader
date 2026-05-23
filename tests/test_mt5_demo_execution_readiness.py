@@ -1,4 +1,7 @@
 from types import SimpleNamespace
+from pathlib import Path
+
+import yaml
 
 from scripts import check_mt5_demo_execution_readiness as readiness_script
 from src.execution.mt5_demo_executor import check_demo_execution_readiness, load_demo_execution_config
@@ -90,8 +93,12 @@ def test_readiness_script_fails_safely_without_mt5(monkeypatch, capsys):
     assert "Status: MT5_NOT_AVAILABLE" in output
 
 
-def test_demo_execution_config_defaults_are_safe():
-    config = load_demo_execution_config()
+def test_demo_execution_config_defaults_are_safe(tmp_path):
+    base_path = tmp_path / "demo_execution.yaml"
+    raw = yaml.safe_load(Path("config/demo_execution.yaml").read_text(encoding="utf-8"))
+    base_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    config = load_demo_execution_config(base_path)
 
     assert config.demo_only is True
     assert config.allow_demo_execution is False

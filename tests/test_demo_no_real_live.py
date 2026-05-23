@@ -1,10 +1,16 @@
 from pathlib import Path
 
+import yaml
+
 from src.execution.mt5_demo_executor import load_demo_execution_config
 
 
-def test_demo_execution_never_enables_real_live():
-    config = load_demo_execution_config("config/demo_execution.yaml")
+def test_demo_execution_never_enables_real_live(tmp_path):
+    base_path = tmp_path / "demo_execution.yaml"
+    raw = yaml.safe_load(Path("config/demo_execution.yaml").read_text(encoding="utf-8"))
+    base_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    config = load_demo_execution_config(base_path)
 
     assert config.allow_real_live is False
     assert config.demo_only is True

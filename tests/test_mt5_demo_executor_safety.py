@@ -81,8 +81,24 @@ class FakeDemoMT5:
 
 def write_enabled_config(path):
     raw = yaml.safe_load(open("config/demo_execution.yaml", encoding="utf-8"))
-    raw["allow_demo_execution"] = True
-    raw["execution_enabled"] = True
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    local_path = path.with_name(f"{path.stem}.local{path.suffix}")
+    local_path.write_text(
+        yaml.safe_dump(
+            {
+                "demo_only": True,
+                "allow_real_live": False,
+                "allow_demo_execution": True,
+                "execution_enabled": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return load_demo_execution_config(path)
+
+
+def write_base_only_config(path):
+    raw = yaml.safe_load(open("config/demo_execution.yaml", encoding="utf-8"))
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     return load_demo_execution_config(path)
 
@@ -99,7 +115,7 @@ def make_request(signal_id="sig-1", volume=0.01, expected_price=2400.10):
 
 
 def test_default_config_blocks_actual_demo_execution(tmp_path):
-    config = load_demo_execution_config()
+    config = write_base_only_config(tmp_path / "demo_execution.yaml")
     fake = FakeDemoMT5()
     executor = MT5DemoExecutor(config, mt5_module=fake, output_dir=tmp_path)
 
@@ -111,7 +127,7 @@ def test_default_config_blocks_actual_demo_execution(tmp_path):
 
 
 def test_dry_run_does_not_call_mt5_or_write_reports(tmp_path):
-    config = load_demo_execution_config()
+    config = write_base_only_config(tmp_path / "demo_execution.yaml")
     fake = FakeDemoMT5()
     executor = MT5DemoExecutor(config, mt5_module=fake, output_dir=tmp_path)
 
@@ -124,7 +140,7 @@ def test_dry_run_does_not_call_mt5_or_write_reports(tmp_path):
 
 
 def test_missing_sl_or_tp_blocks_before_mt5(tmp_path):
-    config = load_demo_execution_config()
+    config = write_base_only_config(tmp_path / "demo_execution.yaml")
     fake = FakeDemoMT5()
     executor = MT5DemoExecutor(config, mt5_module=fake, output_dir=tmp_path)
     request = DemoOrderRequest("sig-no-sl", "BUY", 0.01, None, 2410.0)

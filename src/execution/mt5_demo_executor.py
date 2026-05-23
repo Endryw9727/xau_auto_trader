@@ -17,6 +17,7 @@ import yaml
 
 
 DEFAULT_DEMO_EXECUTION_CONFIG_PATH = Path("config/demo_execution.yaml")
+DEFAULT_DEMO_EXECUTION_LOCAL_CONFIG_PATH = Path("config/demo_execution.local.yaml")
 DEFAULT_DEMO_EXECUTION_OUTPUT_DIR = Path("reports/demo_execution")
 
 DEMO_ORDER_COLUMNS = [
@@ -138,10 +139,11 @@ def load_demo_execution_config(
 ) -> DemoExecutionConfig:
     """Load and validate demo execution config."""
     config_path = Path(path)
-    with config_path.open("r", encoding="utf-8") as file:
-        raw = yaml.safe_load(file) or {}
-    if not isinstance(raw, dict):
-        raise ValueError(f"Invalid demo execution config: {config_path}")
+    base_raw = _load_yaml_mapping(config_path)
+    local_path = _local_demo_execution_config_path(config_path)
+    local_raw = _load_yaml_mapping(local_path) if local_path.exists() else {}
+    raw = _merge_demo_execution_config(base_raw, local_raw)
+    _validate_demo_execution_config_source_safety(base_raw, local_raw, raw)
 
     config = DemoExecutionConfig(
         broker_name=str(raw.get("broker_name", "axi_demo")),
@@ -164,6 +166,49 @@ def load_demo_execution_config(
     )
     validate_demo_execution_config(config)
     return config
+
+
+def _load_yaml_mapping(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as file:
+        raw = yaml.safe_load(file) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"Invalid demo execution config: {path}")
+    return raw
+
+
+def _local_demo_execution_config_path(config_path: Path) -> Path:
+    if config_path == DEFAULT_DEMO_EXECUTION_CONFIG_PATH:
+        return DEFAULT_DEMO_EXECUTION_LOCAL_CONFIG_PATH
+    return config_path.with_name(f"{config_path.stem}.local{config_path.suffix}")
+
+
+def _merge_demo_execution_config(base: dict[str, Any], local: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    merged.update(local)
+    return merged
+
+
+def _validate_demo_execution_config_source_safety(
+    base: dict[str, Any],
+    local: dict[str, Any],
+    merged: dict[str, Any],
+) -> None:
+    if _as_bool(base.get("allow_real_live", False)) or _as_bool(local.get("allow_real_live", False)):
+        raise PermissionError("allow_real_live must remain false")
+
+    for field in ("allow_demo_execution", "execution_enabled"):
+        if _as_bool(base.get(field, False)):
+            raise PermissionError(f"{field}=true is only allowed in local demo-safe config")
+        if _as_bool(merged.get(field, False)) and not _as_bool(local.get(field, False)):
+            raise PermissionError(f"{field}=true is only allowed in local demo-safe config")
+
+    demo_execution_requested = _as_bool(merged.get("allow_demo_execution", False)) or _as_bool(
+        merged.get("execution_enabled", False)
+    )
+    if demo_execution_requested and (
+        not _as_bool(merged.get("demo_only", False)) or _as_bool(merged.get("allow_real_live", False))
+    ):
+        raise PermissionError("demo execution can be enabled only with demo_only=true and allow_real_live=false")
 
 
 def validate_demo_execution_config(config: DemoExecutionConfig) -> None:
