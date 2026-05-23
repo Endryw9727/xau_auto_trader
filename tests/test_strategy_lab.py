@@ -14,6 +14,7 @@ from src.strategy_lab import (
     strategy_v50_candidates,
     strategy_v50_pine,
     strategy_v50_proxy_candidate,
+    strategy_v51_demo_intraday,
 )
 from src.strategy_lab.lab import COMPARISON_FILENAME, get_default_strategy_specs, run_strategy_lab
 
@@ -217,6 +218,7 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
         "v50_final_growth_strategy",
         "v50_proxy_balanced_candidate",
         "v50_pine_mtf_strategy",
+        "demo_intraday_candidate",
     }
     saved = pd.read_csv(tmp_path / COMPARISON_FILENAME)
     strict_row = saved[saved["strategy_name"] == "mtf_strict_offsession_strategy"].iloc[0]
@@ -226,7 +228,7 @@ def test_strategy_lab_exports_comparison_csv(tmp_path):
     assert result.report_path.exists()
     assert set(result.comparison["strategy_name"]) == expected_names
     assert set(saved["strategy_name"]) == expected_names
-    assert len(get_default_strategy_specs()) == 15
+    assert len(get_default_strategy_specs()) == 16
     assert "net_profit" in saved.columns
     assert "max_drawdown" in saved.columns
     assert "profit_drawdown_ratio" in saved.columns
@@ -311,6 +313,7 @@ def test_strategy_lab_includes_v50_pine_candidate():
     assert set(strategy_v50_candidates.FINAL_CANDIDATE_STRATEGY_NAMES).issubset(names)
     assert strategy_v50_proxy_candidate.STRATEGY_NAME in names
     assert strategy_v50_pine.MTF_STRATEGY_NAME in names
+    assert strategy_v51_demo_intraday.STRATEGY_NAME in names
 
 
 def test_legacy_strategy_lab_entrypoint_still_runs():

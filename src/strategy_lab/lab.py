@@ -34,6 +34,7 @@ from src.strategy_lab import (
     strategy_v50_candidates,
     strategy_v50_pine,
     strategy_v50_proxy_candidate,
+    strategy_v51_demo_intraday,
 )
 
 
@@ -164,6 +165,14 @@ def get_default_strategy_specs() -> list[StrategySpec]:
             version="strategy_v50_mtf",
             signal_generator=strategy_v50_pine.generate_mtf_signal,
             description="M5-based Pine V50 candidate using local multi-timeframe CSV features.",
+        ),
+        StrategySpec(
+            name=strategy_v51_demo_intraday.STRATEGY_NAME,
+            version="strategy_v51_demo_intraday",
+            signal_generator=strategy_v51_demo_intraday.generate_signal,
+            description="Demo/paper-only V51 intraday candidate with controlled higher signal frequency.",
+            risk_per_trade=0.0025,
+            min_risk_reward=1.2,
         ),
     ]
 
