@@ -10,7 +10,7 @@ def test_paper_trading_config_is_research_safe():
 
     assert config.strategy_name == "proxy_hardened_no_worst_hours"
     assert config.backup_strategy == "proxy_hardened_no_worst_hours_high_margin"
-    assert config.symbol == "XAUUSD"
+    assert config.symbol == "XAUUSD-P"
     assert config.base_timeframe == "15m"
     assert config.live_mode is False
     assert config.paper_mode is True
