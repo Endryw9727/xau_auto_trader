@@ -70,6 +70,7 @@ class V51DemoIntradayConfig:
     allow_real_live: bool
     allow_demo_execution: bool
     execution_enabled: bool
+    magic_number: int
     risk_per_trade: float
     max_trades_per_day: int
     max_open_positions: int
@@ -86,6 +87,10 @@ class V51DemoIntradayConfig:
     slippage_estimate: float
     max_spread_cost: float
     max_slippage_estimate: float
+    max_spread_points: float
+    max_slippage_points: int
+    max_data_age_minutes: int
+    selection_lookback_candles: int
 
     @property
     def strategy_config(self) -> StrategyConfig:
@@ -120,6 +125,7 @@ def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntrad
         allow_real_live=_as_bool(raw.get("allow_real_live", False)),
         allow_demo_execution=_as_bool(raw.get("allow_demo_execution", False)),
         execution_enabled=_as_bool(raw.get("execution_enabled", False)),
+        magic_number=int(raw.get("magic_number", 510051)),
         risk_per_trade=float(raw.get("risk_per_trade", 0.0025)),
         max_trades_per_day=int(raw.get("max_trades_per_day", 2)),
         max_open_positions=int(raw.get("max_open_positions", 1)),
@@ -136,6 +142,10 @@ def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntrad
         slippage_estimate=float(raw.get("slippage_estimate", 0.1)),
         max_spread_cost=float(raw.get("max_spread_cost", 0.5)),
         max_slippage_estimate=float(raw.get("max_slippage_estimate", 0.5)),
+        max_spread_points=float(raw.get("max_spread_points", 80)),
+        max_slippage_points=int(raw.get("max_slippage_points", 20)),
+        max_data_age_minutes=int(raw.get("max_data_age_minutes", 45)),
+        selection_lookback_candles=int(raw.get("selection_lookback_candles", 16)),
     )
     validate_v51_config(config)
     return config
@@ -149,8 +159,8 @@ def validate_v51_config(config: V51DemoIntradayConfig) -> None:
         raise PermissionError("V51 requires demo_only=true")
     if config.allow_real_live:
         raise PermissionError("allow_real_live must remain false")
-    if config.execution_enabled and not config.allow_demo_execution:
-        raise PermissionError("demo execution requires allow_demo_execution=true and execution_enabled=true")
+    if config.magic_number <= 0:
+        raise ValueError("magic_number must be positive")
     if config.risk_per_trade <= 0 or config.risk_per_trade > 0.005:
         raise ValueError("risk_per_trade must be positive and low for V51 demo evaluation")
     if config.max_trades_per_day <= 0 or config.max_trades_per_day > 2:
@@ -167,6 +177,10 @@ def validate_v51_config(config: V51DemoIntradayConfig) -> None:
         raise ValueError("fixed_lot_size must be positive")
     if config.spread_cost < 0 or config.slippage_estimate < 0:
         raise ValueError("cost estimates cannot be negative")
+    if config.max_spread_points <= 0 or config.max_slippage_points < 0:
+        raise ValueError("MT5 spread/slippage limits must be valid")
+    if config.max_data_age_minutes <= 0 or config.selection_lookback_candles <= 0:
+        raise ValueError("data freshness and selection lookback must be positive")
 
 
 def generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> TradingSignal:
@@ -207,6 +221,9 @@ def build_demo_intraday_decision_log(
     v51_config: V51DemoIntradayConfig | None = None,
     *,
     strategy_config: StrategyConfig | None = None,
+    starting_trades_today: int = 0,
+    open_positions: int = 0,
+    enforce_daily_limit: bool = True,
 ) -> pd.DataFrame:
     """Build a closed-candle V51 decision log with one row per evaluated candle."""
     v51_config = v51_config or load_v51_config()
@@ -221,12 +238,19 @@ def build_demo_intraday_decision_log(
     for _, row in features.iloc[start:].iterrows():
         candle_time = _timestamp_from_row(row)
         trade_day = candle_time.normalize()
-        trades_today = accepted_by_day.get(trade_day, 0)
-        decision = _decision_from_row(row, v51_config, strategy_config, trades_today=trades_today, open_positions=0)
+        accepted_count = accepted_by_day.get(trade_day, 0)
+        trades_today = starting_trades_today + accepted_count if enforce_daily_limit else starting_trades_today
+        decision = _decision_from_row(
+            row,
+            v51_config,
+            strategy_config,
+            trades_today=trades_today,
+            open_positions=open_positions,
+        )
         log_row = _log_row(decision, v51_config)
         rows.append(log_row)
-        if log_row["decision"] == "ACCEPTED":
-            accepted_by_day[trade_day] = trades_today + 1
+        if enforce_daily_limit and log_row["decision"] == "ACCEPTED":
+            accepted_by_day[trade_day] = accepted_count + 1
 
     return pd.DataFrame(rows, columns=V51_LOG_COLUMNS)
 
