@@ -101,6 +101,23 @@ Output:
 - reports/paper_trading/paper_trades.csv
 - salvataggio trade su SQLite
 
+## Lanciare V51 demo live-safe
+
+La pipeline V51 demo live-safe aggiorna prima i dati locali da MT5 in modalita
+read-only, importa eventuali CSV del bridge MT5, verifica la freshness del CSV
+M15 e solo se i dati sono freschi esegue la V51 in demo. Se i dati sono stale,
+la strategia non viene eseguita e viene registrato `DATA_STALE`.
+
+    python scripts/run_v51_live_safe_cycle.py --dry-run
+    python scripts/run_v51_live_safe_cycle.py --execute-demo
+
+Output:
+- reports/demo_execution/v51_live_safe_cycle.log
+- reports/demo_execution/v51_demo_execution_log.csv
+
+Lo script resta demo-only: non abilita live reale e `allow_real_live` deve
+restare `false`.
+
 ## Lanciare Strategy Lab
 
 Confronta piu strategie sullo stesso CSV, senza live trading:
