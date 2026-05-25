@@ -90,6 +90,9 @@ class V51DemoIntradayConfig:
     max_spread_points: float
     max_slippage_points: int
     max_data_age_minutes: int
+    max_candidate_age_minutes: int
+    candidate_freshness_required: bool
+    rejected_signal_cooldown_minutes: int
     selection_lookback_candles: int
 
     @property
@@ -145,6 +148,9 @@ def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntrad
         max_spread_points=float(raw.get("max_spread_points", 80)),
         max_slippage_points=int(raw.get("max_slippage_points", 20)),
         max_data_age_minutes=int(raw.get("max_data_age_minutes", 45)),
+        max_candidate_age_minutes=int(raw.get("max_candidate_age_minutes", 20)),
+        candidate_freshness_required=_as_bool(raw.get("candidate_freshness_required", True)),
+        rejected_signal_cooldown_minutes=int(raw.get("rejected_signal_cooldown_minutes", 30)),
         selection_lookback_candles=int(raw.get("selection_lookback_candles", 16)),
     )
     validate_v51_config(config)
@@ -181,6 +187,10 @@ def validate_v51_config(config: V51DemoIntradayConfig) -> None:
         raise ValueError("MT5 spread/slippage limits must be valid")
     if config.max_data_age_minutes <= 0 or config.selection_lookback_candles <= 0:
         raise ValueError("data freshness and selection lookback must be positive")
+    if config.max_candidate_age_minutes <= 0:
+        raise ValueError("max_candidate_age_minutes must be positive")
+    if config.rejected_signal_cooldown_minutes <= 0:
+        raise ValueError("rejected_signal_cooldown_minutes must be positive")
 
 
 def generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> TradingSignal:

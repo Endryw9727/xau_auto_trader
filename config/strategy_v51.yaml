@@ -32,4 +32,7 @@ max_slippage_estimate: 0.5
 max_spread_points: 80
 max_slippage_points: 20
 max_data_age_minutes: 45
+max_candidate_age_minutes: 20
+candidate_freshness_required: true
+rejected_signal_cooldown_minutes: 30
 selection_lookback_candles: 16

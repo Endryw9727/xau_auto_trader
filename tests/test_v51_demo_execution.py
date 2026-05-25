@@ -25,11 +25,13 @@ class FakeV51MT5:
     TIMEFRAME_M15 = 15
     SYMBOL_TRADE_MODE_DISABLED = 0
 
-    def __init__(self, *, spread=10, demo=True, positions=None, latest_age_minutes=15):
+    def __init__(self, *, spread=10, demo=True, positions=None, latest_age_minutes=15, bid=2400.0, ask=2400.10):
         self.spread = spread
         self.demo = demo
         self.positions = positions or []
         self.latest_age_minutes = latest_age_minutes
+        self.bid = bid
+        self.ask = ask
         self.order_send_called = False
         self.last_request = None
 
@@ -65,7 +67,7 @@ class FakeV51MT5:
         )
 
     def symbol_info_tick(self, symbol):
-        return SimpleNamespace(bid=2400.0, ask=2400.10)
+        return SimpleNamespace(bid=self.bid, ask=self.ask)
 
     def positions_get(self, symbol=None):
         return self.positions
@@ -130,9 +132,14 @@ def make_candidate(**overrides):
         "spread_cost": 0.0,
         "slippage_estimate": 0.1,
         "reason": "test candidate",
+        "session": "LONDON",
     }
     values.update(overrides)
     return V51DemoCandidate(**values)
+
+
+def force_selected_candidate(monkeypatch, candidate):
+    monkeypatch.setattr(executor, "select_best_v51_candidate", lambda *args, **kwargs: (candidate, "forced candidate"))
 
 
 def make_feature_candidates() -> pd.DataFrame:
@@ -229,6 +236,90 @@ def test_v51_demo_executor_blocca_dati_stale(tmp_path):
 
     assert result.status == "NO_TRADE"
     assert "stale" in result.reason
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_rifiuta_candidate_stale_prima_dello_slippage(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path)
+    stale_candidate = make_candidate(candle_time=NOW - pd.Timedelta(minutes=60), entry_price=2400.0)
+    force_selected_candidate(monkeypatch, stale_candidate)
+    fake = FakeV51MT5(bid=2402.90, ask=2403.00)
+
+    result = executor.run_v51_demo_execution_once(config_path=config_path, output_dir=tmp_path, mt5_module=fake, now=NOW)
+
+    assert result.status == "NO_TRADE"
+    assert result.reason.startswith("candidate stale:")
+    assert "max_candidate_age_minutes=20" in result.reason
+    assert result.slippage_points is None
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_candidate_fresco_arriva_al_controllo_successivo(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path)
+    fresh_candidate = make_candidate(candle_time=NOW - pd.Timedelta(minutes=15), entry_price=2400.0)
+    force_selected_candidate(monkeypatch, fresh_candidate)
+    fake = FakeV51MT5(bid=2402.90, ask=2403.00)
+
+    result = executor.run_v51_demo_execution_once(config_path=config_path, output_dir=tmp_path, mt5_module=fake, now=NOW)
+
+    assert result.status == "NO_TRADE"
+    assert "slippage" in result.reason
+    assert result.slippage_points == pytest.approx(300.0)
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_non_ritenta_signal_id_rifiutato_entra_cooldown(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, rejected_signal_cooldown_minutes=30)
+    candidate = make_candidate()
+    force_selected_candidate(monkeypatch, candidate)
+    pd.DataFrame(
+        [
+            {
+                "timestamp": (NOW - pd.Timedelta(minutes=10)).isoformat(),
+                "event": "no_trade",
+                "status": "NO_TRADE",
+                "decision": "NO_TRADE",
+                "reason": "slippage 188.0 points exceeds max 20.0",
+                "signal_id": candidate.signal_id,
+                "candle_time": candidate.candle_time.isoformat(),
+                "symbol": candidate.symbol,
+                "side": candidate.side,
+                "dry_run": True,
+            }
+        ],
+        columns=executor.V51_DEMO_LOG_COLUMNS,
+    ).to_csv(tmp_path / "v51_demo_execution_log.csv", index=False)
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(config_path=config_path, output_dir=tmp_path, mt5_module=fake, now=NOW)
+
+    assert result.status == "NO_TRADE"
+    assert result.reason.startswith("duplicate rejected signal cooldown")
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_allow_real_live_resta_false():
+    config = load_v51_config()
+
+    assert config.allow_real_live is False
+
+
+def test_v51_demo_executor_non_apre_ordini_se_freshness_required_e_candidate_vecchio(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, candidate_freshness_required=True)
+    stale_candidate = make_candidate(candle_time=NOW - pd.Timedelta(minutes=60))
+    force_selected_candidate(monkeypatch, stale_candidate)
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        dry_run=False,
+        now=NOW,
+    )
+
+    assert result.status == "NO_TRADE"
+    assert result.reason.startswith("candidate stale:")
     assert fake.order_send_called is False
 
 

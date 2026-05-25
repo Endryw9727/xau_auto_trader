@@ -61,6 +61,17 @@ V51_DEMO_LOG_COLUMNS = [
     "candle_time",
     "symbol",
     "side",
+    "candidate_age_minutes",
+    "latest_closed_candle_time",
+    "current_bid",
+    "current_ask",
+    "expected_entry_price",
+    "slippage_points",
+    "max_slippage_points",
+    "spread_points",
+    "session",
+    "score",
+    "risk_reward",
     "dry_run",
 ]
 
@@ -85,6 +96,7 @@ class V51DemoCandidate:
     spread_cost: float
     slippage_estimate: float
     reason: str
+    session: str = ""
 
 
 @dataclass(frozen=True)
@@ -102,6 +114,17 @@ class V51DemoExecutionResult:
     mt5_retcode: int | None = None
     mt5_order: int | None = None
     mt5_deal: int | None = None
+    candidate_age_minutes: float | None = None
+    latest_closed_candle_time: pd.Timestamp | None = None
+    current_bid: float | None = None
+    current_ask: float | None = None
+    expected_entry_price: float | None = None
+    slippage_points: float | None = None
+    max_slippage_points: float | None = None
+    spread_points: float | None = None
+    session: str | None = None
+    score: float | None = None
+    risk_reward: float | None = None
 
 
 def run_v51_demo_execution_once(
@@ -153,8 +176,10 @@ def run_v51_demo_execution_once(
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
+        latest_closed_candle_time = _latest_closed_candle_time(rates)
         order_log = load_v51_demo_orders(output_dir)
-        trading_day = pd.Timestamp(rates.index[-1]).normalize()
+        execution_log = load_v51_demo_execution_log(output_dir)
+        trading_day = latest_closed_candle_time.normalize()
         trades_today = _trades_for_day(order_log, trading_day)
         if trades_today >= config.max_trades_per_day:
             result = _result(
@@ -171,13 +196,16 @@ def run_v51_demo_execution_once(
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
-        spread_points = _spread_points(mt5.symbol_info(config.symbol), mt5.symbol_info_tick(config.symbol))
+        symbol_info = mt5.symbol_info(config.symbol)
+        tick = mt5.symbol_info_tick(config.symbol)
+        spread_points = _spread_points(symbol_info, tick)
         if spread_points is not None and spread_points > config.max_spread_points:
             result = _result(
                 False,
                 "NO_TRADE",
                 f"spread {spread_points:.1f} points exceeds max {config.max_spread_points:.1f}",
                 dry_run=dry_run,
+                telemetry=_market_telemetry(config, tick, spread_points=spread_points),
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
@@ -196,13 +224,40 @@ def run_v51_demo_execution_once(
             return result
 
         candidate_error = validate_v51_demo_candidate(candidate, config, order_log)
+        telemetry = _candidate_telemetry(
+            candidate,
+            config,
+            latest_closed_candle_time=latest_closed_candle_time,
+            tick=tick,
+            spread_points=spread_points,
+            slippage_points=None,
+        )
         if candidate_error is not None:
-            result = _result(False, "REJECTED", candidate_error, dry_run=dry_run, candidate=candidate)
+            result = _result(False, "REJECTED", candidate_error, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
             append_v51_demo_log(output_dir, result, event="candidate_gate")
             return result
 
-        tick = mt5.symbol_info_tick(config.symbol)
-        slippage = _slippage_points(candidate.side, candidate.entry_price, mt5.symbol_info(config.symbol), tick)
+        cooldown_reason = _rejected_signal_cooldown_reason(execution_log, candidate.signal_id, config, now)
+        if cooldown_reason is not None:
+            result = _result(False, "NO_TRADE", cooldown_reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
+            append_v51_demo_log(output_dir, result, event="no_trade")
+            return result
+
+        stale_candidate_reason = _candidate_stale_reason(candidate, config, latest_closed_candle_time)
+        if stale_candidate_reason is not None:
+            result = _result(False, "NO_TRADE", stale_candidate_reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
+            append_v51_demo_log(output_dir, result, event="no_trade")
+            return result
+
+        slippage = _slippage_points(candidate.side, candidate.entry_price, symbol_info, tick)
+        telemetry = _candidate_telemetry(
+            candidate,
+            config,
+            latest_closed_candle_time=latest_closed_candle_time,
+            tick=tick,
+            spread_points=spread_points,
+            slippage_points=slippage,
+        )
         if slippage is not None and slippage > config.max_slippage_points:
             result = _result(
                 False,
@@ -210,12 +265,20 @@ def run_v51_demo_execution_once(
                 f"slippage {slippage:.1f} points exceeds max {config.max_slippage_points:.1f}",
                 dry_run=dry_run,
                 candidate=candidate,
+                telemetry=telemetry,
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
         if dry_run:
-            result = _result(True, "DRY_RUN", "V51 dry-run accepted; no MT5 order was submitted.", dry_run=True, candidate=candidate)
+            result = _result(
+                True,
+                "DRY_RUN",
+                "V51 dry-run accepted; no MT5 order was submitted.",
+                dry_run=True,
+                candidate=candidate,
+                telemetry=telemetry,
+            )
             append_v51_demo_order(output_dir, result, candidate, config, spread_points=spread_points)
             append_v51_demo_log(output_dir, result, event="dry_run")
             return result
@@ -223,12 +286,19 @@ def run_v51_demo_execution_once(
         request = _build_mt5_request(mt5, config, candidate)
         order_send = getattr(mt5, "order_send", None)
         if not callable(order_send):
-            result = _result(False, "ERROR", "MT5 order submission function is unavailable.", dry_run=False, candidate=candidate)
+            result = _result(
+                False,
+                "ERROR",
+                "MT5 order submission function is unavailable.",
+                dry_run=False,
+                candidate=candidate,
+                telemetry=telemetry,
+            )
             append_v51_demo_log(output_dir, result, event="submit_error")
             return result
 
         response = order_send(request)
-        result = _result_from_response(mt5, response, candidate)
+        result = _result_from_response(mt5, response, candidate, telemetry=telemetry)
         append_v51_demo_order(output_dir, result, candidate, config, spread_points=spread_points)
         append_v51_demo_log(output_dir, result, event="demo_order_result")
         return result
@@ -378,6 +448,7 @@ def select_best_v51_candidate(
         spread_cost=float(row["spread_cost"]),
         slippage_estimate=float(row["slippage_estimate"]),
         reason=str(row["reason"]),
+        session=str(row.get("session", "")),
     )
     return candidate, "V51 candidate selected"
 
@@ -414,6 +485,8 @@ def ensure_v51_demo_execution_files(output_dir: str | Path = DEFAULT_V51_DEMO_OU
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
             pd.DataFrame(columns=columns).to_csv(path, index=False)
+        else:
+            _ensure_csv_columns(path, columns)
     return paths
 
 
@@ -436,6 +509,18 @@ def load_v51_demo_orders(output_dir: str | Path = DEFAULT_V51_DEMO_OUTPUT_DIR) -
         if column not in frame.columns:
             frame[column] = pd.NA
     return frame[V51_DEMO_ORDER_COLUMNS]
+
+
+def load_v51_demo_execution_log(output_dir: str | Path = DEFAULT_V51_DEMO_OUTPUT_DIR) -> pd.DataFrame:
+    """Load V51 demo execution events without creating files."""
+    path = v51_demo_execution_paths(output_dir)["log"]
+    if not path.exists() or path.stat().st_size == 0:
+        return pd.DataFrame(columns=V51_DEMO_LOG_COLUMNS)
+    frame = pd.read_csv(path)
+    for column in V51_DEMO_LOG_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    return frame[V51_DEMO_LOG_COLUMNS]
 
 
 def append_v51_demo_order(
@@ -494,6 +579,19 @@ def append_v51_demo_log(
         "candle_time": result.candle_time.isoformat() if result.candle_time is not None else None,
         "symbol": result.symbol,
         "side": result.side,
+        "candidate_age_minutes": result.candidate_age_minutes,
+        "latest_closed_candle_time": result.latest_closed_candle_time.isoformat()
+        if result.latest_closed_candle_time is not None
+        else None,
+        "current_bid": result.current_bid,
+        "current_ask": result.current_ask,
+        "expected_entry_price": result.expected_entry_price,
+        "slippage_points": result.slippage_points,
+        "max_slippage_points": result.max_slippage_points,
+        "spread_points": result.spread_points,
+        "session": result.session,
+        "score": result.score,
+        "risk_reward": result.risk_reward,
         "dry_run": result.dry_run,
     }
     _append_csv(paths["log"], row, V51_DEMO_LOG_COLUMNS)
@@ -555,12 +653,25 @@ def _build_mt5_request(mt5: Any, config: V51DemoIntradayConfig, candidate: V51De
     }
 
 
-def _result_from_response(mt5: Any, response: Any, candidate: V51DemoCandidate) -> V51DemoExecutionResult:
+def _result_from_response(
+    mt5: Any,
+    response: Any,
+    candidate: V51DemoCandidate,
+    *,
+    telemetry: dict[str, Any] | None = None,
+) -> V51DemoExecutionResult:
     if response is None:
-        return _result(False, "ERROR", f"MT5 returned no response: {_last_error(mt5)}", dry_run=False, candidate=candidate)
+        return _result(
+            False,
+            "ERROR",
+            f"MT5 returned no response: {_last_error(mt5)}",
+            dry_run=False,
+            candidate=candidate,
+            telemetry=telemetry,
+        )
     retcode = _int_or_none(getattr(response, "retcode", None))
     success = retcode in _success_retcode_values(mt5)
-    return V51DemoExecutionResult(
+    result = _result(
         accepted=success,
         status="SENT" if success else "ERROR",
         reason="V51 demo order accepted by MT5." if success else f"MT5 rejected V51 demo order: {getattr(response, 'comment', '')}",
@@ -569,10 +680,18 @@ def _result_from_response(mt5: Any, response: Any, candidate: V51DemoCandidate) 
         candle_time=candidate.candle_time,
         symbol=candidate.symbol,
         side=candidate.side,
-        mt5_retcode=retcode,
-        mt5_order=_int_or_none(getattr(response, "order", None)),
-        mt5_deal=_int_or_none(getattr(response, "deal", None)),
+        candidate=candidate,
+        telemetry=telemetry,
     )
+    values = result.__dict__.copy()
+    values.update(
+        {
+            "mt5_retcode": retcode,
+            "mt5_order": _int_or_none(getattr(response, "order", None)),
+            "mt5_deal": _int_or_none(getattr(response, "deal", None)),
+        }
+    )
+    return V51DemoExecutionResult(**values)
 
 
 def _result(
@@ -582,25 +701,139 @@ def _result(
     *,
     dry_run: bool,
     candidate: V51DemoCandidate | None = None,
+    telemetry: dict[str, Any] | None = None,
+    signal_id: str | None = None,
+    candle_time: pd.Timestamp | None = None,
+    symbol: str | None = None,
+    side: str | None = None,
 ) -> V51DemoExecutionResult:
+    telemetry = telemetry or {}
     return V51DemoExecutionResult(
         accepted=accepted,
         status=status,
         reason=reason,
         dry_run=dry_run,
-        signal_id=candidate.signal_id if candidate is not None else None,
-        candle_time=candidate.candle_time if candidate is not None else None,
-        symbol=candidate.symbol if candidate is not None else None,
-        side=candidate.side if candidate is not None else None,
+        signal_id=candidate.signal_id if candidate is not None else signal_id,
+        candle_time=candidate.candle_time if candidate is not None else candle_time,
+        symbol=candidate.symbol if candidate is not None else symbol,
+        side=candidate.side if candidate is not None else side,
+        candidate_age_minutes=telemetry.get("candidate_age_minutes"),
+        latest_closed_candle_time=telemetry.get("latest_closed_candle_time"),
+        current_bid=telemetry.get("current_bid"),
+        current_ask=telemetry.get("current_ask"),
+        expected_entry_price=telemetry.get("expected_entry_price"),
+        slippage_points=telemetry.get("slippage_points"),
+        max_slippage_points=telemetry.get("max_slippage_points"),
+        spread_points=telemetry.get("spread_points"),
+        session=telemetry.get("session") if telemetry.get("session") is not None else (candidate.session if candidate is not None else None),
+        score=telemetry.get("score"),
+        risk_reward=telemetry.get("risk_reward"),
+    )
+
+
+def _latest_closed_candle_time(data: pd.DataFrame) -> pd.Timestamp:
+    latest = pd.Timestamp(data.index[-1])
+    return latest.tz_localize(UTC) if latest.tzinfo is None else latest.tz_convert(UTC)
+
+
+def _market_telemetry(
+    config: V51DemoIntradayConfig,
+    tick: Any,
+    *,
+    spread_points: float | None,
+) -> dict[str, Any]:
+    return {
+        "current_bid": _float_or_none(getattr(tick, "bid", None)) if tick is not None else None,
+        "current_ask": _float_or_none(getattr(tick, "ask", None)) if tick is not None else None,
+        "max_slippage_points": float(config.max_slippage_points),
+        "spread_points": spread_points,
+    }
+
+
+def _candidate_telemetry(
+    candidate: V51DemoCandidate,
+    config: V51DemoIntradayConfig,
+    *,
+    latest_closed_candle_time: pd.Timestamp,
+    tick: Any,
+    spread_points: float | None,
+    slippage_points: float | None,
+) -> dict[str, Any]:
+    telemetry = _market_telemetry(config, tick, spread_points=spread_points)
+    telemetry.update(
+        {
+            "candidate_age_minutes": _candidate_age_minutes(candidate, latest_closed_candle_time),
+            "latest_closed_candle_time": latest_closed_candle_time,
+            "expected_entry_price": candidate.entry_price,
+            "slippage_points": slippage_points,
+            "session": candidate.session,
+            "score": candidate.score,
+            "risk_reward": candidate.risk_reward,
+        }
+    )
+    return telemetry
+
+
+def _candidate_age_minutes(candidate: V51DemoCandidate, latest_closed_candle_time: pd.Timestamp) -> float:
+    candidate_time = _utc_timestamp(candidate.candle_time)
+    latest_time = _utc_timestamp(latest_closed_candle_time)
+    return (latest_time - candidate_time).total_seconds() / 60.0
+
+
+def _candidate_stale_reason(
+    candidate: V51DemoCandidate,
+    config: V51DemoIntradayConfig,
+    latest_closed_candle_time: pd.Timestamp,
+) -> str | None:
+    if not config.candidate_freshness_required:
+        return None
+    age_minutes = _candidate_age_minutes(candidate, latest_closed_candle_time)
+    if _utc_timestamp(candidate.candle_time) == _utc_timestamp(latest_closed_candle_time):
+        return None
+    if 0 <= age_minutes <= config.max_candidate_age_minutes:
+        return None
+    return (
+        "candidate stale: "
+        f"candle_time={_utc_timestamp(candidate.candle_time).isoformat()}, "
+        f"age_minutes={age_minutes:.1f}, "
+        f"max_candidate_age_minutes={config.max_candidate_age_minutes}"
+    )
+
+
+def _rejected_signal_cooldown_reason(
+    execution_log: pd.DataFrame,
+    signal_id: str,
+    config: V51DemoIntradayConfig,
+    now: pd.Timestamp,
+) -> str | None:
+    if execution_log.empty or "signal_id" not in execution_log.columns:
+        return None
+    same_signal = execution_log[execution_log["signal_id"].astype(str) == str(signal_id)].copy()
+    if same_signal.empty:
+        return None
+    reasons = same_signal.get("reason", pd.Series([""] * len(same_signal), index=same_signal.index)).astype(str).str.lower()
+    statuses = same_signal.get("status", pd.Series([""] * len(same_signal), index=same_signal.index)).astype(str).str.upper()
+    retry_rejections = reasons.str.contains("slippage|candidate stale|duplicate rejected signal cooldown", regex=True)
+    rejected_rows = same_signal[statuses.isin({"NO_TRADE", "REJECTED"}) & retry_rejections].copy()
+    if rejected_rows.empty:
+        return None
+    timestamps = pd.to_datetime(rejected_rows["timestamp"], errors="coerce", utc=True)
+    elapsed = (now - timestamps).dt.total_seconds() / 60.0
+    recent = elapsed[(elapsed >= 0) & (elapsed <= config.rejected_signal_cooldown_minutes)]
+    if recent.empty:
+        return None
+    return (
+        "duplicate rejected signal cooldown: "
+        f"signal_id={signal_id}, "
+        f"last_rejected_minutes_ago={recent.min():.1f}, "
+        f"cooldown_minutes={config.rejected_signal_cooldown_minutes}"
     )
 
 
 def _stale_data_reason(data: pd.DataFrame, config: V51DemoIntradayConfig, now: pd.Timestamp) -> str | None:
     if data.empty:
         return "MT5 returned no closed candles"
-    latest = pd.Timestamp(data.index[-1])
-    if latest.tzinfo is None:
-        latest = latest.tz_localize(UTC)
+    latest = _latest_closed_candle_time(data)
     age_minutes = (now - latest).total_seconds() / 60.0
     if age_minutes > config.max_data_age_minutes:
         return f"MT5 data stale: latest closed candle is {age_minutes:.1f} minutes old"
@@ -716,6 +949,20 @@ def _success_retcode_values(mt5: Any) -> set[int]:
     return {value for value in values if value is not None}
 
 
+def _ensure_csv_columns(path: Path, columns: list[str]) -> None:
+    try:
+        frame = pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        pd.DataFrame(columns=columns).to_csv(path, index=False)
+        return
+    missing = [column for column in columns if column not in frame.columns]
+    if not missing:
+        return
+    for column in missing:
+        frame[column] = pd.NA
+    frame[columns].to_csv(path, index=False)
+
+
 def _append_csv(path: Path, row: dict[str, Any], columns: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     header = not path.exists() or path.stat().st_size == 0
@@ -727,6 +974,11 @@ def _utc_now(now: pd.Timestamp | None) -> pd.Timestamp:
         return pd.Timestamp.now(tz=UTC)
     value = pd.Timestamp(now)
     return value.tz_localize(UTC) if value.tzinfo is None else value.tz_convert(UTC)
+
+
+def _utc_timestamp(value: Any) -> pd.Timestamp:
+    timestamp = pd.Timestamp(value)
+    return timestamp.tz_localize(UTC) if timestamp.tzinfo is None else timestamp.tz_convert(UTC)
 
 
 def _last_error(mt5: Any) -> Any:
