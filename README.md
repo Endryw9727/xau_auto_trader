@@ -118,6 +118,22 @@ Output:
 Lo script resta demo-only: non abilita live reale e `allow_real_live` deve
 restare `false`.
 
+## V51 MTF Context Report
+
+Il report MTF V51 legge solo CSV locali e produce contesto operativo
+multi-timeframe per D1, H4, H1, M15, M5 e M1 quando disponibili. Non modifica
+config, non riduce filtri e non invia ordini.
+
+    python scripts/run_v51_mtf_context_report.py
+    python scripts/run_v51_mtf_context_report.py --data-dir data/raw --output-dir reports/diagnostics
+
+Output:
+- reports/diagnostics/v51_mtf_context_latest.txt
+- reports/diagnostics/v51_mtf_context_summary.csv
+
+Il bias finale puo essere `LONG_BIAS`, `SHORT_BIAS`, `MIXED` o
+`NO_TRADE_CONTEXT` e serve solo come supporto diagnostico per V51.
+
 ## Lanciare Strategy Lab
 
 Confronta piu strategie sullo stesso CSV, senza live trading:
