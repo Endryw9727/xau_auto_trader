@@ -35,4 +35,6 @@ max_data_age_minutes: 45
 max_candidate_age_minutes: 20
 candidate_freshness_required: true
 rejected_signal_cooldown_minutes: 30
+live_candidate_window_minutes: 20
+require_latest_closed_candle_candidate: true
 selection_lookback_candles: 16

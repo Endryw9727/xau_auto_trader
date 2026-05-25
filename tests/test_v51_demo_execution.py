@@ -170,6 +170,35 @@ def make_feature_candidates() -> pd.DataFrame:
     )
 
 
+def make_live_feature_candidates(*, latest_accepted: bool) -> pd.DataFrame:
+    index = pd.DatetimeIndex([NOW - pd.Timedelta(minutes=45), NOW - pd.Timedelta(minutes=30), NOW - pd.Timedelta(minutes=15)])
+    latest_score = 82.0 if latest_accepted else 50.0
+    return pd.DataFrame(
+        {
+            "Open": [2399.8, 2400.8, 2401.8],
+            "High": [2401.0, 2402.0, 2403.0],
+            "Low": [2399.0, 2400.0, 2401.0],
+            "Close": [2400.0, 2401.0, 2402.0],
+            "Volume": [1000.0] * 3,
+            "ATR_14": [1.0] * 3,
+            "ADX_14": [20.0] * 3,
+            "v50_adx": [20.0] * 3,
+            "v50_ema21": [2399.0, 2400.0, 2401.0],
+            "v50_score_long": [95.0, 72.0, latest_score],
+            "v50_score_short": [20.0, 20.0, 20.0],
+            "v50_quality_long_ok": [True] * 3,
+            "v50_quality_short_ok": [False] * 3,
+            "v50_setup_long": [True] * 3,
+            "v50_setup_short": [False] * 3,
+            "v50_chop_block": [False] * 3,
+            "v50_long_chase_block": [False] * 3,
+            "v50_late_long_impulse": [False] * 3,
+            "v50_session": ["LONDON"] * 3,
+        },
+        index=index,
+    )
+
+
 def test_v51_demo_executor_non_puo_abilitare_allow_real_live(tmp_path):
     config_path = write_v51_config(tmp_path, allow_real_live=True)
 
@@ -320,6 +349,73 @@ def test_v51_demo_executor_non_apre_ordini_se_freshness_required_e_candidate_vec
 
     assert result.status == "NO_TRADE"
     assert result.reason.startswith("candidate stale:")
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_ignora_vecchio_score_alto_senza_candidate_recente(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, require_latest_closed_candle_candidate=True)
+    market_data = make_live_feature_candidates(latest_accepted=False)
+    monkeypatch.setattr(executor, "read_mt5_closed_rates", lambda mt5, config: market_data)
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(config_path=config_path, output_dir=tmp_path, mt5_module=fake, now=NOW)
+
+    assert result.status == "NO_TRADE"
+    assert result.reason == "no fresh live candidate on latest closed candle"
+    assert result.selection_reason == "no fresh live candidate on latest closed candle"
+    assert result.latest_closed_candle_time == market_data.index[-1]
+    assert result.selected_candidate_time is None
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_seleziona_candidate_sulla_latest_closed_candle(tmp_path):
+    config_path = write_v51_config(tmp_path, require_latest_closed_candle_candidate=True)
+    config = load_v51_config(config_path)
+    market_data = make_live_feature_candidates(latest_accepted=True)
+
+    candidate, reason = executor.select_best_v51_candidate(
+        market_data,
+        config,
+        latest_closed_candle_time=market_data.index[-1],
+    )
+
+    assert candidate is not None
+    assert candidate.candle_time == market_data.index[-1]
+    assert candidate.signal_id == "V51-202605231145-BUY"
+    assert reason == "V51 live candidate selected on latest closed candle"
+
+
+def test_v51_demo_executor_require_latest_non_seleziona_candela_precedente(tmp_path):
+    config_path = write_v51_config(tmp_path, require_latest_closed_candle_candidate=True)
+    config = load_v51_config(config_path)
+    market_data = make_live_feature_candidates(latest_accepted=False)
+
+    candidate, reason = executor.select_best_v51_candidate(
+        market_data,
+        config,
+        latest_closed_candle_time=market_data.index[-1],
+    )
+
+    assert candidate is None
+    assert reason == "no fresh live candidate on latest closed candle"
+
+
+def test_v51_demo_executor_non_apre_ordini_demo_su_candidate_vecchi_live(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, require_latest_closed_candle_candidate=True)
+    market_data = make_live_feature_candidates(latest_accepted=False)
+    monkeypatch.setattr(executor, "read_mt5_closed_rates", lambda mt5, config: market_data)
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        dry_run=False,
+        now=NOW,
+    )
+
+    assert result.status == "NO_TRADE"
+    assert result.reason == "no fresh live candidate on latest closed candle"
     assert fake.order_send_called is False
 
 

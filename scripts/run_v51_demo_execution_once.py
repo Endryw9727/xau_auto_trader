@@ -61,6 +61,12 @@ def main() -> None:
 
     print(f"Signal id: {result.signal_id}")
     print(f"Candle time: {result.candle_time}")
+    print(f"Latest closed candle time: {result.latest_closed_candle_time}")
+    print(f"Selected candidate time: {result.selected_candidate_time}")
+    print(f"Candidate age minutes: {result.candidate_age_minutes}")
+    print(f"Live candidate window minutes: {result.live_candidate_window_minutes}")
+    print(f"Require latest closed candle candidate: {result.require_latest_closed_candle_candidate}")
+    print(f"Selection reason: {result.selection_reason}")
     print(f"Side: {result.side}")
     print(f"Status: {result.status}")
     print(f"Accepted: {result.accepted}")

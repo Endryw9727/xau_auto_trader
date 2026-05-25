@@ -63,6 +63,10 @@ V51_DEMO_LOG_COLUMNS = [
     "side",
     "candidate_age_minutes",
     "latest_closed_candle_time",
+    "selected_candidate_time",
+    "live_candidate_window_minutes",
+    "require_latest_closed_candle_candidate",
+    "selection_reason",
     "current_bid",
     "current_ask",
     "expected_entry_price",
@@ -116,6 +120,10 @@ class V51DemoExecutionResult:
     mt5_deal: int | None = None
     candidate_age_minutes: float | None = None
     latest_closed_candle_time: pd.Timestamp | None = None
+    selected_candidate_time: pd.Timestamp | None = None
+    live_candidate_window_minutes: int | None = None
+    require_latest_closed_candle_candidate: bool | None = None
+    selection_reason: str | None = None
     current_bid: float | None = None
     current_ask: float | None = None
     expected_entry_price: float | None = None
@@ -217,13 +225,27 @@ def run_v51_demo_execution_once(
             trades_today=trades_today,
             open_positions=0,
             spread_points=spread_points,
+            latest_closed_candle_time=latest_closed_candle_time,
         )
         if candidate is None:
-            result = _result(False, "NO_TRADE", no_trade_reason, dry_run=dry_run)
+            result = _result(
+                False,
+                "NO_TRADE",
+                no_trade_reason,
+                dry_run=dry_run,
+                telemetry=_selection_telemetry(
+                    config,
+                    latest_closed_candle_time=latest_closed_candle_time,
+                    tick=tick,
+                    spread_points=spread_points,
+                    selection_reason=no_trade_reason,
+                ),
+            )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
         candidate_error = validate_v51_demo_candidate(candidate, config, order_log)
+        selection_reason = no_trade_reason
         telemetry = _candidate_telemetry(
             candidate,
             config,
@@ -231,6 +253,7 @@ def run_v51_demo_execution_once(
             tick=tick,
             spread_points=spread_points,
             slippage_points=None,
+            selection_reason=selection_reason,
         )
         if candidate_error is not None:
             result = _result(False, "REJECTED", candidate_error, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
@@ -257,6 +280,7 @@ def run_v51_demo_execution_once(
             tick=tick,
             spread_points=spread_points,
             slippage_points=slippage,
+            selection_reason=selection_reason,
         )
         if slippage is not None and slippage > config.max_slippage_points:
             result = _result(
@@ -326,6 +350,9 @@ def build_v51_demo_status(
         "allow_real_live": config.allow_real_live,
         "execution_enabled": config.execution_enabled,
         "magic_number": config.magic_number,
+        "live_candidate_window_minutes": config.live_candidate_window_minutes,
+        "require_latest_closed_candle_candidate": config.require_latest_closed_candle_candidate,
+        "candidate_freshness_required": config.candidate_freshness_required,
         "orders_today": _trades_for_day(load_v51_demo_orders(output_dir), now.normalize()),
         "mt5_initialized": False,
         "account_connected": False,
@@ -396,6 +423,7 @@ def select_best_v51_candidate(
     trades_today: int = 0,
     open_positions: int = 0,
     spread_points: float | None = None,
+    latest_closed_candle_time: pd.Timestamp | None = None,
 ) -> tuple[V51DemoCandidate | None, str]:
     """Select the best recent V51 candidate, not the first one seen."""
     log = build_demo_intraday_decision_log(
@@ -408,13 +436,21 @@ def select_best_v51_candidate(
     if log.empty:
         return None, "no V51 closed-candle decisions were produced"
 
-    log["candle_time_dt"] = pd.to_datetime(log["candle_time"], errors="coerce")
-    latest_day = pd.Timestamp(market_data.index[-1]).normalize()
+    log["candle_time_dt"] = pd.to_datetime(log["candle_time"], errors="coerce", utc=True)
+    latest_day = _utc_timestamp(market_data.index[-1]).normalize()
     latest_log = log[log["candle_time_dt"].dt.normalize() == latest_day].tail(config.selection_lookback_candles).copy()
     if latest_log.empty:
         return None, "no V51 candidates on latest MT5 trading day"
 
+    if latest_closed_candle_time is not None:
+        latest_log = _filter_live_candidate_window(latest_log, config, latest_closed_candle_time)
+        if latest_log.empty:
+            return None, "no fresh live candidate on latest closed candle"
+
     accepted = latest_log[latest_log["decision"] == "ACCEPTED"].copy()
+    if latest_closed_candle_time is not None and accepted.empty:
+        return None, "no fresh live candidate on latest closed candle"
+
     if existing_orders is not None and not existing_orders.empty:
         accepted = accepted[
             ~accepted.apply(
@@ -433,6 +469,7 @@ def select_best_v51_candidate(
         ascending=[False, False, False, True, True, False],
     )
     row = accepted.iloc[0]
+    selection_reason = _live_selection_reason(row["candle_time_dt"], config, latest_closed_candle_time)
     candidate = V51DemoCandidate(
         signal_id=str(row["signal_id"]),
         candle_time=pd.Timestamp(row["candle_time_dt"]),
@@ -450,7 +487,7 @@ def select_best_v51_candidate(
         reason=str(row["reason"]),
         session=str(row.get("session", "")),
     )
-    return candidate, "V51 candidate selected"
+    return candidate, selection_reason
 
 
 def validate_v51_demo_candidate(
@@ -583,6 +620,10 @@ def append_v51_demo_log(
         "latest_closed_candle_time": result.latest_closed_candle_time.isoformat()
         if result.latest_closed_candle_time is not None
         else None,
+        "selected_candidate_time": result.selected_candidate_time.isoformat() if result.selected_candidate_time is not None else None,
+        "live_candidate_window_minutes": result.live_candidate_window_minutes,
+        "require_latest_closed_candle_candidate": result.require_latest_closed_candle_candidate,
+        "selection_reason": result.selection_reason,
         "current_bid": result.current_bid,
         "current_ask": result.current_ask,
         "expected_entry_price": result.expected_entry_price,
@@ -719,6 +760,10 @@ def _result(
         side=candidate.side if candidate is not None else side,
         candidate_age_minutes=telemetry.get("candidate_age_minutes"),
         latest_closed_candle_time=telemetry.get("latest_closed_candle_time"),
+        selected_candidate_time=telemetry.get("selected_candidate_time"),
+        live_candidate_window_minutes=telemetry.get("live_candidate_window_minutes"),
+        require_latest_closed_candle_candidate=telemetry.get("require_latest_closed_candle_candidate"),
+        selection_reason=telemetry.get("selection_reason"),
         current_bid=telemetry.get("current_bid"),
         current_ask=telemetry.get("current_ask"),
         expected_entry_price=telemetry.get("expected_entry_price"),
@@ -750,6 +795,26 @@ def _market_telemetry(
     }
 
 
+def _selection_telemetry(
+    config: V51DemoIntradayConfig,
+    *,
+    latest_closed_candle_time: pd.Timestamp,
+    tick: Any,
+    spread_points: float | None,
+    selection_reason: str,
+) -> dict[str, Any]:
+    telemetry = _market_telemetry(config, tick, spread_points=spread_points)
+    telemetry.update(
+        {
+            "latest_closed_candle_time": latest_closed_candle_time,
+            "live_candidate_window_minutes": config.live_candidate_window_minutes,
+            "require_latest_closed_candle_candidate": config.require_latest_closed_candle_candidate,
+            "selection_reason": selection_reason,
+        }
+    )
+    return telemetry
+
+
 def _candidate_telemetry(
     candidate: V51DemoCandidate,
     config: V51DemoIntradayConfig,
@@ -758,12 +823,19 @@ def _candidate_telemetry(
     tick: Any,
     spread_points: float | None,
     slippage_points: float | None,
+    selection_reason: str,
 ) -> dict[str, Any]:
-    telemetry = _market_telemetry(config, tick, spread_points=spread_points)
+    telemetry = _selection_telemetry(
+        config,
+        latest_closed_candle_time=latest_closed_candle_time,
+        tick=tick,
+        spread_points=spread_points,
+        selection_reason=selection_reason,
+    )
     telemetry.update(
         {
             "candidate_age_minutes": _candidate_age_minutes(candidate, latest_closed_candle_time),
-            "latest_closed_candle_time": latest_closed_candle_time,
+            "selected_candidate_time": _utc_timestamp(candidate.candle_time),
             "expected_entry_price": candidate.entry_price,
             "slippage_points": slippage_points,
             "session": candidate.session,
@@ -797,6 +869,40 @@ def _candidate_stale_reason(
         f"candle_time={_utc_timestamp(candidate.candle_time).isoformat()}, "
         f"age_minutes={age_minutes:.1f}, "
         f"max_candidate_age_minutes={config.max_candidate_age_minutes}"
+    )
+
+
+def _filter_live_candidate_window(
+    log: pd.DataFrame,
+    config: V51DemoIntradayConfig,
+    latest_closed_candle_time: pd.Timestamp,
+) -> pd.DataFrame:
+    latest_time = _utc_timestamp(latest_closed_candle_time)
+    candidate_times = pd.to_datetime(log["candle_time_dt"], errors="coerce", utc=True)
+    if config.require_latest_closed_candle_candidate:
+        mask = candidate_times == latest_time
+    else:
+        ages = (latest_time - candidate_times).dt.total_seconds() / 60.0
+        mask = (ages >= 0) & (ages <= config.live_candidate_window_minutes)
+    return log[mask].copy()
+
+
+def _live_selection_reason(
+    candidate_time: Any,
+    config: V51DemoIntradayConfig,
+    latest_closed_candle_time: pd.Timestamp | None,
+) -> str:
+    if latest_closed_candle_time is None:
+        return "V51 candidate selected"
+    latest_time = _utc_timestamp(latest_closed_candle_time)
+    selected_time = _utc_timestamp(candidate_time)
+    if selected_time == latest_time:
+        return "V51 live candidate selected on latest closed candle"
+    age_minutes = (latest_time - selected_time).total_seconds() / 60.0
+    return (
+        "V51 live candidate selected within live candidate window: "
+        f"age_minutes={age_minutes:.1f}, "
+        f"live_candidate_window_minutes={config.live_candidate_window_minutes}"
     )
 
 

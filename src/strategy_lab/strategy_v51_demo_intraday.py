@@ -93,6 +93,8 @@ class V51DemoIntradayConfig:
     max_candidate_age_minutes: int
     candidate_freshness_required: bool
     rejected_signal_cooldown_minutes: int
+    live_candidate_window_minutes: int
+    require_latest_closed_candle_candidate: bool
     selection_lookback_candles: int
 
     @property
@@ -151,6 +153,8 @@ def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntrad
         max_candidate_age_minutes=int(raw.get("max_candidate_age_minutes", 20)),
         candidate_freshness_required=_as_bool(raw.get("candidate_freshness_required", True)),
         rejected_signal_cooldown_minutes=int(raw.get("rejected_signal_cooldown_minutes", 30)),
+        live_candidate_window_minutes=int(raw.get("live_candidate_window_minutes", 20)),
+        require_latest_closed_candle_candidate=_as_bool(raw.get("require_latest_closed_candle_candidate", True)),
         selection_lookback_candles=int(raw.get("selection_lookback_candles", 16)),
     )
     validate_v51_config(config)
@@ -191,6 +195,8 @@ def validate_v51_config(config: V51DemoIntradayConfig) -> None:
         raise ValueError("max_candidate_age_minutes must be positive")
     if config.rejected_signal_cooldown_minutes <= 0:
         raise ValueError("rejected_signal_cooldown_minutes must be positive")
+    if config.live_candidate_window_minutes <= 0:
+        raise ValueError("live_candidate_window_minutes must be positive")
 
 
 def generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> TradingSignal:
