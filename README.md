@@ -159,6 +159,16 @@ Output atteso:
 - reports/diagnostics/mt5_timeframe_update_latest.txt
 - reports/diagnostics/mt5_timeframe_update_summary.csv
 
+Troubleshooting: se M1/M5 mostrano `No candles returned`, aprire in MT5 i
+grafici M1 e M5 del simbolo, caricare lo storico con il tasto Home, controllare
+`Max bars in chart` nelle opzioni MT5 e poi rilanciare:
+
+    python scripts/update_mt5_timeframes.py
+
+Per M15, se MT5 non restituisce candele ma `data/raw/xauusd.csv` e fresco, lo
+script normalizza la primary M15 verso `data/raw/timeframes/XAUUSD_M15.csv` con
+status `OK_FALLBACK_PRIMARY_M15`.
+
 ## Lanciare Strategy Lab
 
 Confronta piu strategie sullo stesso CSV, senza live trading:
