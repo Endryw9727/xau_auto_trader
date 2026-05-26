@@ -140,6 +140,25 @@ input non validi come `MISSING`, `EMPTY`, `INVALID_COLUMNS`, `STALE` o
 `PRICE_MISMATCH` e li esclude dal bias finale. Se `XAUUSD_M15.csv` e vecchio
 ma `data/raw/xauusd.csv` e fresco, M15 usa la primary come fallback.
 
+## MT5 Multi-Timeframe CSV Update
+
+Lo script aggiorna in modalita read-only i CSV multi-timeframe usati dal report
+MTF V51 e poi valida ogni file. Se MT5 non restituisce un timeframe, registra
+`WARNING`, non crasha e lascia invariato il file precedente. Non invia ordini.
+
+    python scripts/update_mt5_timeframes.py
+    python scripts/update_mt5_timeframes.py --symbol XAUUSD-P --data-dir data/raw --timeframes M1 M5 M15 M30 H1 H4
+
+Output atteso:
+- data/raw/timeframes/XAUUSD_M1.csv
+- data/raw/timeframes/XAUUSD_M5.csv
+- data/raw/timeframes/XAUUSD_M15.csv
+- data/raw/timeframes/XAUUSD_M30.csv
+- data/raw/timeframes/XAUUSD_H1.csv
+- data/raw/timeframes/XAUUSD_H4.csv
+- reports/diagnostics/mt5_timeframe_update_latest.txt
+- reports/diagnostics/mt5_timeframe_update_summary.csv
+
 ## Lanciare Strategy Lab
 
 Confronta piu strategie sullo stesso CSV, senza live trading:
