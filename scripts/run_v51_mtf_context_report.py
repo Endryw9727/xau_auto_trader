@@ -9,6 +9,7 @@ import sys
 from typing import Any
 
 import pandas as pd
+from pandas.errors import EmptyDataError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -31,6 +32,7 @@ FAST_EMA = 21
 SLOW_EMA = 55
 ATR_PERIOD = 14
 SWING_LOOKBACK = 20
+PRICE_MISMATCH_MAX_RATIO = 0.02
 
 SUMMARY_COLUMNS = [
     "generated_at",
@@ -39,11 +41,16 @@ SUMMARY_COLUMNS = [
     "final_reason",
     "timeframe",
     "status",
+    "data_status",
+    "used_in_bias",
     "source_file",
     "rows",
     "latest_candle_time",
     "candle_age_minutes",
+    "age_minutes",
     "last_close",
+    "primary_close",
+    "price_gap_from_primary",
     "trend_direction",
     "ema_fast",
     "ema_slow",
@@ -68,6 +75,19 @@ class MTFContextResult:
     latest_path: Path
 
 
+@dataclass(frozen=True)
+class LoadedTimeframe:
+    """Loaded CSV data plus alignment metadata."""
+
+    frame: pd.DataFrame
+    source_file: Path | None
+    data_status: str
+    used_in_bias: bool
+    primary_close: float | None
+    price_gap_from_primary: float | None
+    reason: str
+
+
 def run_v51_mtf_context_report(
     *,
     config_path: str | Path = DEFAULT_V51_CONFIG_PATH,
@@ -83,15 +103,15 @@ def run_v51_mtf_context_report(
     summary_path = output_dir / SUMMARY_FILENAME
     latest_path = output_dir / LATEST_FILENAME
 
-    loaded = load_available_timeframes(Path(data_dir))
+    primary = load_primary_reference(Path(data_dir), now=now)
+    loaded = load_available_timeframes(Path(data_dir), primary=primary, now=now)
     contexts = []
     for timeframe in TIMEFRAMES:
         item = loaded.get(timeframe)
         if item is None:
-            contexts.append(missing_context(timeframe, config.symbol))
+            contexts.append(missing_context(timeframe, config.symbol, primary_close=primary.primary_close))
             continue
-        frame, source_file, status = item
-        contexts.append(analyze_timeframe(timeframe, frame, source_file=source_file, symbol=config.symbol, now=now, status=status))
+        contexts.append(analyze_timeframe(timeframe, item, symbol=config.symbol, now=now))
 
     final_bias, final_reason = build_final_bias(contexts)
     rows = []
@@ -112,23 +132,126 @@ def run_v51_mtf_context_report(
     return MTFContextResult("OK", final_bias, summary_path, latest_path)
 
 
-def load_available_timeframes(data_dir: Path) -> dict[str, tuple[pd.DataFrame, Path, str]]:
+def load_available_timeframes(data_dir: Path, *, primary: LoadedTimeframe, now: pd.Timestamp) -> dict[str, LoadedTimeframe]:
     """Load available local timeframe files; derive D1 if no D1 CSV exists."""
-    result: dict[str, tuple[pd.DataFrame, Path, str]] = {}
+    result: dict[str, LoadedTimeframe] = {}
     for timeframe in ("H4", "H1", "M15", "M5", "M1", "D1"):
         source = find_timeframe_file(data_dir, timeframe)
         if source is None:
             continue
-        try:
-            result[timeframe] = (load_ohlcv_file(source), source, "OK")
-        except Exception:
-            result[timeframe] = (pd.DataFrame(), source, "ERROR")
+        loaded = load_timeframe_with_alignment(timeframe, source, primary=primary, now=now)
+        if timeframe == "M15" and loaded.data_status not in {"OK", "EXCLUDED"} and primary.data_status == "OK":
+            loaded = LoadedTimeframe(
+                frame=primary.frame,
+                source_file=primary.source_file,
+                data_status="OK",
+                used_in_bias=True,
+                primary_close=primary.primary_close,
+                price_gap_from_primary=0.0,
+                reason=f"M15 fallback to primary CSV because {source.name} status={loaded.data_status}",
+            )
+        result[timeframe] = loaded
 
     if "D1" not in result:
-        base = next((result[timeframe] for timeframe in ("H4", "H1", "M15") if timeframe in result), None)
-        if base is not None and not base[0].empty:
-            result["D1"] = (resample_to_d1(base[0]), base[1], "DERIVED")
+        base = next(
+            (result[timeframe] for timeframe in ("H4", "H1", "M15") if timeframe in result and result[timeframe].used_in_bias),
+            None,
+        )
+        if base is not None and not base.frame.empty:
+            result["D1"] = LoadedTimeframe(
+                frame=resample_to_d1(base.frame),
+                source_file=base.source_file,
+                data_status="OK",
+                used_in_bias=True,
+                primary_close=primary.primary_close,
+                price_gap_from_primary=base.price_gap_from_primary,
+                reason="D1 derived from aligned intraday data",
+            )
     return result
+
+
+def load_primary_reference(data_dir: Path, *, now: pd.Timestamp) -> LoadedTimeframe:
+    """Load the primary M15 CSV used as data-alignment reference."""
+    source = next((path for path in (data_dir / "xauusd.csv", data_dir / "XAUUSD.csv") if path.exists()), None)
+    if source is None:
+        return LoadedTimeframe(
+            frame=pd.DataFrame(),
+            source_file=None,
+            data_status="MISSING",
+            used_in_bias=False,
+            primary_close=None,
+            price_gap_from_primary=None,
+            reason="primary CSV missing",
+        )
+    frame, status, reason = load_ohlcv_file_with_status(source)
+    primary_close = latest_close(frame) if status == "OK" else None
+    if status == "OK" and alignment_freshness_status("M15", frame, primary=_missing_primary_stub(), now=now) == "STALE":
+        status = "STALE"
+    return LoadedTimeframe(
+        frame=frame,
+        source_file=source,
+        data_status=status,
+        used_in_bias=status == "OK",
+        primary_close=primary_close,
+        price_gap_from_primary=0.0 if primary_close is not None else None,
+        reason=reason,
+    )
+
+
+def load_timeframe_with_alignment(
+    timeframe: str,
+    source: Path,
+    *,
+    primary: LoadedTimeframe,
+    now: pd.Timestamp,
+) -> LoadedTimeframe:
+    """Load one timeframe and mark whether it can be used in final bias."""
+    frame, status, reason = load_ohlcv_file_with_status(source)
+    if status != "OK":
+        return LoadedTimeframe(frame, source, status, False, primary.primary_close, None, reason)
+    if primary.source_file is not None and source.resolve() == primary.source_file.resolve() and primary.data_status != "OK":
+        return LoadedTimeframe(
+            frame,
+            source,
+            primary.data_status,
+            False,
+            primary.primary_close,
+            0.0 if primary.primary_close is not None else None,
+            "primary CSV is stale or unavailable",
+        )
+
+    close = latest_close(frame)
+    if close is None:
+        return LoadedTimeframe(frame, source, "EMPTY", False, primary.primary_close, None, "no latest close")
+
+    freshness_status = alignment_freshness_status(timeframe, frame, primary=primary, now=now)
+    price_gap = None if primary.primary_close is None else abs(close - primary.primary_close)
+    price_status = alignment_price_status(close, primary.primary_close)
+    data_status = "OK"
+    used = True
+    reason = "aligned with primary reference"
+    if freshness_status is not None:
+        data_status = freshness_status
+        used = False
+        reason = "latest candle is stale versus primary reference"
+    elif price_status is not None:
+        data_status = price_status
+        used = False
+        reason = "latest close too far from primary close"
+    if primary.data_status != "OK" and timeframe != "M15":
+        data_status = "EXCLUDED"
+        used = False
+        reason = "primary reference unavailable for alignment"
+
+    return LoadedTimeframe(
+        frame=frame,
+        source_file=source,
+        data_status=data_status,
+        used_in_bias=used,
+        primary_close=primary.primary_close,
+        price_gap_from_primary=price_gap,
+        reason=reason,
+    )
 
 
 def find_timeframe_file(data_dir: Path, timeframe: str) -> Path | None:
@@ -153,11 +276,29 @@ def find_timeframe_file(data_dir: Path, timeframe: str) -> Path | None:
 
 def load_ohlcv_file(path: str | Path) -> pd.DataFrame:
     """Load a local OHLCV file into standard lowercase columns."""
+    frame, status, reason = load_ohlcv_file_with_status(path)
+    if status != "OK":
+        raise ValueError(reason)
+    return frame
+
+
+def load_ohlcv_file_with_status(path: str | Path) -> tuple[pd.DataFrame, str, str]:
+    """Load a local OHLCV file and return a guard status instead of raising."""
     csv_path = Path(path)
-    separator = detect_csv_separator(csv_path)
-    header_mode = detect_header_or_no_header(csv_path)
-    raw = pd.read_csv(csv_path, sep=separator, header=0 if header_mode == "header" else None, engine="python")
-    normalized = normalize_ohlc_columns(raw)
+    if not csv_path.exists():
+        return pd.DataFrame(), "MISSING", "file missing"
+    if csv_path.stat().st_size == 0:
+        return pd.DataFrame(), "EMPTY", "file empty"
+    try:
+        separator = detect_csv_separator(csv_path)
+        header_mode = detect_header_or_no_header(csv_path)
+        raw = pd.read_csv(csv_path, sep=separator, header=0 if header_mode == "header" else None, engine="python")
+    except EmptyDataError:
+        return pd.DataFrame(), "EMPTY", "file empty"
+    try:
+        normalized = normalize_ohlc_columns(raw)
+    except ValueError as exc:
+        return pd.DataFrame(), "INVALID_COLUMNS", str(exc)
     normalized["time"] = pd.to_datetime(normalized["time"], errors="coerce")
     for column in ("open", "high", "low", "close"):
         normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
@@ -167,7 +308,9 @@ def load_ohlcv_file(path: str | Path) -> pd.DataFrame:
         normalized["volume"] = 1.0
     normalized = normalized.dropna(subset=["time", "open", "high", "low", "close"])
     normalized = normalized.drop_duplicates(subset=["time"]).sort_values("time").reset_index(drop=True)
-    return normalized[["time", "open", "high", "low", "close", "volume"]]
+    if normalized.empty:
+        return normalized, "EMPTY", "no valid OHLC rows"
+    return normalized[["time", "open", "high", "low", "close", "volume"]], "OK", "loaded"
 
 
 def resample_to_d1(frame: pd.DataFrame) -> pd.DataFrame:
@@ -181,16 +324,23 @@ def resample_to_d1(frame: pd.DataFrame) -> pd.DataFrame:
 
 def analyze_timeframe(
     timeframe: str,
-    frame: pd.DataFrame,
+    loaded: LoadedTimeframe,
     *,
-    source_file: Path,
     symbol: str,
     now: pd.Timestamp,
-    status: str = "OK",
 ) -> dict[str, Any]:
     """Calculate one timeframe context row."""
-    if frame.empty or status == "ERROR":
-        return missing_context(timeframe, symbol, status=status, source_file=source_file)
+    frame = loaded.frame
+    if frame.empty or loaded.data_status in {"MISSING", "EMPTY", "INVALID_COLUMNS"}:
+        return missing_context(
+            timeframe,
+            symbol,
+            status=loaded.data_status,
+            source_file=loaded.source_file,
+            primary_close=loaded.primary_close,
+            price_gap_from_primary=loaded.price_gap_from_primary,
+            reason=loaded.reason,
+        )
 
     data = frame.tail(max(SLOW_EMA + ATR_PERIOD + SWING_LOOKBACK, 120)).copy()
     close = data["close"].astype(float)
@@ -211,12 +361,17 @@ def analyze_timeframe(
     age = max(0.0, (now - latest_time).total_seconds() / 60.0)
     return {
         "timeframe": timeframe,
-        "status": status,
-        "source_file": str(source_file),
+        "status": loaded.data_status,
+        "data_status": loaded.data_status,
+        "used_in_bias": loaded.used_in_bias,
+        "source_file": "" if loaded.source_file is None else str(loaded.source_file),
         "rows": int(len(frame)),
         "latest_candle_time": latest_time.isoformat(),
         "candle_age_minutes": age,
+        "age_minutes": age,
         "last_close": latest_close,
+        "primary_close": "" if loaded.primary_close is None else loaded.primary_close,
+        "price_gap_from_primary": "" if loaded.price_gap_from_primary is None else loaded.price_gap_from_primary,
         "trend_direction": trend,
         "ema_fast": latest_fast,
         "ema_slow": latest_slow,
@@ -227,7 +382,7 @@ def analyze_timeframe(
         "volatility_regime": volatility_regime(atr),
         "distance_from_support": latest_close - recent_low,
         "distance_from_resistance": recent_high - latest_close,
-        "context_note": context_note(timeframe, trend, alignment, latest_close, recent_low, recent_high),
+        "context_note": context_note(timeframe, trend, alignment, latest_close, recent_low, recent_high, loaded.reason),
     }
 
 
@@ -237,16 +392,24 @@ def missing_context(
     *,
     status: str = "MISSING",
     source_file: Path | None = None,
+    primary_close: float | None = None,
+    price_gap_from_primary: float | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     """Return a placeholder context for a missing timeframe."""
     return {
         "timeframe": timeframe,
         "status": status,
+        "data_status": status,
+        "used_in_bias": False,
         "source_file": "" if source_file is None else str(source_file),
         "rows": 0,
         "latest_candle_time": "",
         "candle_age_minutes": "",
+        "age_minutes": "",
         "last_close": "",
+        "primary_close": "" if primary_close is None else primary_close,
+        "price_gap_from_primary": "" if price_gap_from_primary is None else price_gap_from_primary,
         "trend_direction": "UNKNOWN",
         "ema_fast": "",
         "ema_slow": "",
@@ -257,7 +420,7 @@ def missing_context(
         "volatility_regime": "UNKNOWN",
         "distance_from_support": "",
         "distance_from_resistance": "",
-        "context_note": f"{symbol} {timeframe} context unavailable: {status}",
+        "context_note": f"{symbol} {timeframe} context unavailable: {reason or status}",
     }
 
 
@@ -308,24 +471,102 @@ def volatility_regime(atr: pd.Series) -> str:
     return "NORMAL"
 
 
-def context_note(timeframe: str, trend: str, alignment: str, last_close: float, support: float, resistance: float) -> str:
+def alignment_freshness_status(
+    timeframe: str,
+    frame: pd.DataFrame,
+    *,
+    primary: LoadedTimeframe,
+    now: pd.Timestamp,
+) -> str | None:
+    latest = latest_timestamp(frame)
+    if latest is None:
+        return "EMPTY"
+    primary_latest = latest_timestamp(primary.frame)
+    if primary_latest is not None:
+        lag_minutes = (primary_latest - latest).total_seconds() / 60.0
+        if lag_minutes > allowed_alignment_lag_minutes(timeframe):
+            return "STALE"
+        return None
+    age_minutes = max(0.0, (now - latest).total_seconds() / 60.0)
+    if age_minutes > allowed_absolute_age_minutes(timeframe):
+        return "STALE"
+    return None
+
+
+def alignment_price_status(close: float, primary_close: float | None) -> str | None:
+    if primary_close is None or primary_close <= 0:
+        return None
+    if abs(close - primary_close) / primary_close > PRICE_MISMATCH_MAX_RATIO:
+        return "PRICE_MISMATCH"
+    return None
+
+
+def allowed_alignment_lag_minutes(timeframe: str) -> float:
+    return max(float(TIMEFRAME_MINUTES.get(timeframe, 15)) * 1.5, 30.0)
+
+
+def allowed_absolute_age_minutes(timeframe: str) -> float:
+    return max(float(TIMEFRAME_MINUTES.get(timeframe, 15)) * 3.0, 90.0)
+
+
+def latest_timestamp(frame: pd.DataFrame) -> pd.Timestamp | None:
+    if frame.empty or "time" not in frame.columns:
+        return None
+    times = pd.to_datetime(frame["time"], errors="coerce").dropna()
+    if times.empty:
+        return None
+    return pd.Timestamp(times.max()).tz_localize(None)
+
+
+def latest_close(frame: pd.DataFrame) -> float | None:
+    if frame.empty or "close" not in frame.columns:
+        return None
+    closes = pd.to_numeric(frame["close"], errors="coerce").dropna()
+    if closes.empty:
+        return None
+    return float(closes.iloc[-1])
+
+
+def _missing_primary_stub() -> LoadedTimeframe:
+    return LoadedTimeframe(
+        frame=pd.DataFrame(),
+        source_file=None,
+        data_status="MISSING",
+        used_in_bias=False,
+        primary_close=None,
+        price_gap_from_primary=None,
+        reason="primary unavailable",
+    )
+
+
+def context_note(
+    timeframe: str,
+    trend: str,
+    alignment: str,
+    last_close: float,
+    support: float,
+    resistance: float,
+    alignment_note: str,
+) -> str:
     return (
         f"{timeframe}: trend={trend}, ema_alignment={alignment}, "
-        f"close={last_close:.2f}, support={support:.2f}, resistance={resistance:.2f}"
+        f"close={last_close:.2f}, support={support:.2f}, resistance={resistance:.2f}, "
+        f"alignment={alignment_note}"
     )
 
 
 def build_final_bias(contexts: list[dict[str, Any]]) -> tuple[str, str]:
     """Aggregate timeframe context into a conservative operational bias."""
     by_tf = {context["timeframe"]: context for context in contexts}
-    available = [context for context in contexts if context["status"] in {"OK", "DERIVED"}]
+    available = [context for context in contexts if bool(context.get("used_in_bias"))]
     if len(available) < 2:
-        return "NO_TRADE_CONTEXT", "Not enough multi-timeframe context is available."
+        excluded = ", ".join(f"{context['timeframe']}={context['data_status']}" for context in contexts)
+        return "NO_TRADE_CONTEXT", f"Not enough aligned multi-timeframe context is available. Data status: {excluded}"
 
-    higher = [by_tf[tf]["trend_direction"] for tf in ("D1", "H4") if by_tf.get(tf, {}).get("status") in {"OK", "DERIVED"}]
-    h1 = by_tf.get("H1", {}).get("trend_direction", "UNKNOWN")
-    m15 = by_tf.get("M15", {}).get("trend_direction", "UNKNOWN")
-    lower = [by_tf[tf]["trend_direction"] for tf in ("M5", "M1") if by_tf.get(tf, {}).get("status") == "OK"]
+    higher = [by_tf[tf]["trend_direction"] for tf in ("D1", "H4") if bool(by_tf.get(tf, {}).get("used_in_bias"))]
+    h1 = by_tf.get("H1", {}).get("trend_direction", "UNKNOWN") if bool(by_tf.get("H1", {}).get("used_in_bias")) else "UNUSED"
+    m15 = by_tf.get("M15", {}).get("trend_direction", "UNKNOWN") if bool(by_tf.get("M15", {}).get("used_in_bias")) else "UNUSED"
+    lower = [by_tf[tf]["trend_direction"] for tf in ("M5", "M1") if bool(by_tf.get(tf, {}).get("used_in_bias"))]
 
     bull_score = sum(direction == "BULL" for direction in higher) * 2 + (h1 == "BULL") + (m15 == "BULL")
     bear_score = sum(direction == "BEAR" for direction in higher) * 2 + (h1 == "BEAR") + (m15 == "BEAR")
@@ -372,6 +613,14 @@ def build_latest_text(symbol: str, final_bias: str, final_reason: str, contexts:
             f"support={context['recent_swing_low']} resistance={context['recent_swing_high']} "
             f"dist_support={context['distance_from_support']} dist_resistance={context['distance_from_resistance']}"
         )
+    lines.extend(["", "Data Alignment", "-" * 72])
+    for context in contexts:
+        lines.append(
+            f"{context['timeframe']} file={context['source_file']} "
+            f"latest={context['latest_candle_time']} close={context['last_close']} "
+            f"age_minutes={context['age_minutes']} price_gap_vs_primary={context['price_gap_from_primary']} "
+            f"status={context['data_status']} used_in_bias={context['used_in_bias']}"
+        )
     lines.extend(["", "No orders were sent. This is context diagnostics only.", ""])
     return "\n".join(lines)
 
@@ -404,7 +653,7 @@ def _tf_reason(contexts: list[dict[str, Any]], timeframes: tuple[str, ...]) -> s
         context = by_tf.get(timeframe)
         if context is None:
             continue
-        parts.append(f"{timeframe}={context['trend_direction']} ({context['status']})")
+        parts.append(f"{timeframe}={context['trend_direction']} ({context['data_status']}, used={context['used_in_bias']})")
     return ", ".join(parts) if parts else "UNAVAILABLE"
 
 

@@ -134,6 +134,12 @@ Output:
 Il bias finale puo essere `LONG_BIAS`, `SHORT_BIAS`, `MIXED` o
 `NO_TRADE_CONTEXT` e serve solo come supporto diagnostico per V51.
 
+Il report include un data alignment guard: usa `data/raw/xauusd.csv` come
+primary reference, verifica freshness e prezzo di ogni timeframe, marca gli
+input non validi come `MISSING`, `EMPTY`, `INVALID_COLUMNS`, `STALE` o
+`PRICE_MISMATCH` e li esclude dal bias finale. Se `XAUUSD_M15.csv` e vecchio
+ma `data/raw/xauusd.csv` e fresco, M15 usa la primary come fallback.
+
 ## Lanciare Strategy Lab
 
 Confronta piu strategie sullo stesso CSV, senza live trading:
