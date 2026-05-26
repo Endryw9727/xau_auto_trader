@@ -23,6 +23,7 @@ from src.strategy_lab.strategy_v51_demo_intraday import (
 
 
 DEFAULT_V51_DEMO_OUTPUT_DIR = Path("reports/demo_execution")
+DEFAULT_V51_MTF_CONTEXT_SUMMARY_PATH = Path("reports/diagnostics/v51_mtf_context_summary.csv")
 V51_DEMO_COMMENT = "V51_DEMO"
 
 V51_DEMO_ORDER_COLUMNS = [
@@ -76,6 +77,10 @@ V51_DEMO_LOG_COLUMNS = [
     "session",
     "score",
     "risk_reward",
+    "mtf_final_bias",
+    "mtf_filter_enabled",
+    "mtf_filter_passed",
+    "mtf_filter_reason",
     "dry_run",
 ]
 
@@ -133,12 +138,27 @@ class V51DemoExecutionResult:
     session: str | None = None
     score: float | None = None
     risk_reward: float | None = None
+    mtf_final_bias: str | None = None
+    mtf_filter_enabled: bool | None = None
+    mtf_filter_passed: bool | None = None
+    mtf_filter_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class MTFDirectionFilterResult:
+    """Read-only MTF direction filter outcome for a selected V51 candidate."""
+
+    enabled: bool
+    passed: bool
+    final_bias: str
+    reason: str
 
 
 def run_v51_demo_execution_once(
     *,
     config_path: str | Path = DEFAULT_V51_CONFIG_PATH,
     output_dir: str | Path = DEFAULT_V51_DEMO_OUTPUT_DIR,
+    mtf_context_summary_path: str | Path | None = DEFAULT_V51_MTF_CONTEXT_SUMMARY_PATH,
     mt5_module: Any | None = None,
     dry_run: bool = True,
     now: pd.Timestamp | None = None,
@@ -260,6 +280,13 @@ def run_v51_demo_execution_once(
             append_v51_demo_log(output_dir, result, event="candidate_gate")
             return result
 
+        mtf_filter = evaluate_mtf_direction_filter(candidate, config, mtf_context_summary_path)
+        telemetry = _with_mtf_telemetry(telemetry, mtf_filter)
+        if not mtf_filter.passed:
+            result = _result(False, "NO_TRADE", mtf_filter.reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
+            append_v51_demo_log(output_dir, result, event="no_trade")
+            return result
+
         cooldown_reason = _rejected_signal_cooldown_reason(execution_log, candidate.signal_id, config, now)
         if cooldown_reason is not None:
             result = _result(False, "NO_TRADE", cooldown_reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
@@ -282,6 +309,7 @@ def run_v51_demo_execution_once(
             slippage_points=slippage,
             selection_reason=selection_reason,
         )
+        telemetry = _with_mtf_telemetry(telemetry, mtf_filter)
         if slippage is not None and slippage > config.max_slippage_points:
             result = _result(
                 False,
@@ -633,9 +661,116 @@ def append_v51_demo_log(
         "session": result.session,
         "score": result.score,
         "risk_reward": result.risk_reward,
+        "mtf_final_bias": result.mtf_final_bias,
+        "mtf_filter_enabled": result.mtf_filter_enabled,
+        "mtf_filter_passed": result.mtf_filter_passed,
+        "mtf_filter_reason": result.mtf_filter_reason,
         "dry_run": result.dry_run,
     }
     _append_csv(paths["log"], row, V51_DEMO_LOG_COLUMNS)
+
+
+def evaluate_mtf_direction_filter(
+    candidate: V51DemoCandidate,
+    config: V51DemoIntradayConfig,
+    summary_path: str | Path | None = DEFAULT_V51_MTF_CONTEXT_SUMMARY_PATH,
+) -> MTFDirectionFilterResult:
+    """Apply the optional read-only MTF directional filter to a selected candidate."""
+    if not config.use_mtf_context_filter:
+        return MTFDirectionFilterResult(False, True, "", "mtf context filter disabled")
+    if summary_path is None:
+        return MTFDirectionFilterResult(
+            True,
+            False,
+            "",
+            "mtf_direction_filter_blocked: MTF context summary path is not configured",
+        )
+
+    path = Path(summary_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return MTFDirectionFilterResult(
+            True,
+            False,
+            "",
+            f"mtf_direction_filter_blocked: MTF context summary missing: {path}",
+        )
+    try:
+        summary = pd.read_csv(path)
+    except Exception as exc:
+        return MTFDirectionFilterResult(
+            True,
+            False,
+            "",
+            f"mtf_direction_filter_blocked: cannot read MTF context summary: {exc}",
+        )
+    if summary.empty or "final_bias" not in summary.columns:
+        return MTFDirectionFilterResult(
+            True,
+            False,
+            "",
+            "mtf_direction_filter_blocked: MTF context summary has no final_bias",
+        )
+
+    bias_values = summary["final_bias"].dropna()
+    final_bias = "" if bias_values.empty else str(bias_values.iloc[0]).strip().upper()
+    if config.require_mtf_data_ok:
+        missing = _required_mtf_data_issues(summary)
+        if missing:
+            return MTFDirectionFilterResult(
+                True,
+                False,
+                final_bias,
+                "mtf_direction_filter_blocked: required M1/M5 context not OK: " + ", ".join(missing),
+            )
+
+    allowed = config.allowed_mtf_bias_for_buy if candidate.side == "BUY" else config.allowed_mtf_bias_for_sell
+    if final_bias not in allowed:
+        return MTFDirectionFilterResult(
+            True,
+            False,
+            final_bias,
+            (
+                "mtf_direction_filter_blocked: "
+                f"side={candidate.side}, final_bias={final_bias or 'UNKNOWN'}, "
+                f"allowed={','.join(allowed)}"
+            ),
+        )
+    return MTFDirectionFilterResult(
+        True,
+        True,
+        final_bias,
+        f"mtf_direction_filter_passed: side={candidate.side}, final_bias={final_bias}",
+    )
+
+
+def _required_mtf_data_issues(summary: pd.DataFrame) -> list[str]:
+    issues = []
+    if "timeframe" not in summary.columns:
+        return ["M1=MISSING", "M5=MISSING"]
+    for timeframe in ("M1", "M5"):
+        rows = summary[summary["timeframe"].astype(str).str.upper() == timeframe]
+        if rows.empty:
+            issues.append(f"{timeframe}=MISSING")
+            continue
+        row = rows.iloc[0]
+        data_status = str(row.get("data_status", row.get("status", "UNKNOWN"))).upper()
+        used = _as_logged_bool(row.get("used_in_bias", False))
+        if data_status != "OK" or not used:
+            issues.append(f"{timeframe}={data_status},used_in_bias={used}")
+    return issues
+
+
+def _with_mtf_telemetry(telemetry: dict[str, Any], mtf_filter: MTFDirectionFilterResult) -> dict[str, Any]:
+    result = dict(telemetry)
+    result.update(
+        {
+            "mtf_final_bias": mtf_filter.final_bias,
+            "mtf_filter_enabled": mtf_filter.enabled,
+            "mtf_filter_passed": mtf_filter.passed,
+            "mtf_filter_reason": mtf_filter.reason,
+        }
+    )
+    return result
 
 
 def _validate_execution_gates(config: V51DemoIntradayConfig) -> str | None:
@@ -773,6 +908,10 @@ def _result(
         session=telemetry.get("session") if telemetry.get("session") is not None else (candidate.session if candidate is not None else None),
         score=telemetry.get("score"),
         risk_reward=telemetry.get("risk_reward"),
+        mtf_final_bias=telemetry.get("mtf_final_bias"),
+        mtf_filter_enabled=telemetry.get("mtf_filter_enabled"),
+        mtf_filter_passed=telemetry.get("mtf_filter_passed"),
+        mtf_filter_reason=telemetry.get("mtf_filter_reason"),
     )
 
 
@@ -1099,6 +1238,14 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _as_logged_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None or pd.isna(value):
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _int_or_none(value: Any) -> int | None:

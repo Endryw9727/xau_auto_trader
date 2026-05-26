@@ -96,6 +96,10 @@ class V51DemoIntradayConfig:
     live_candidate_window_minutes: int
     require_latest_closed_candle_candidate: bool
     selection_lookback_candles: int
+    use_mtf_context_filter: bool
+    require_mtf_data_ok: bool
+    allowed_mtf_bias_for_buy: tuple[str, ...]
+    allowed_mtf_bias_for_sell: tuple[str, ...]
 
     @property
     def strategy_config(self) -> StrategyConfig:
@@ -156,6 +160,10 @@ def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntrad
         live_candidate_window_minutes=int(raw.get("live_candidate_window_minutes", 20)),
         require_latest_closed_candle_candidate=_as_bool(raw.get("require_latest_closed_candle_candidate", True)),
         selection_lookback_candles=int(raw.get("selection_lookback_candles", 16)),
+        use_mtf_context_filter=_as_bool(raw.get("use_mtf_context_filter", False)),
+        require_mtf_data_ok=_as_bool(raw.get("require_mtf_data_ok", True)),
+        allowed_mtf_bias_for_buy=_as_tuple(raw.get("allowed_mtf_bias_for_buy", "LONG_BIAS")),
+        allowed_mtf_bias_for_sell=_as_tuple(raw.get("allowed_mtf_bias_for_sell", "SHORT_BIAS")),
     )
     validate_v51_config(config)
     return config
@@ -197,6 +205,8 @@ def validate_v51_config(config: V51DemoIntradayConfig) -> None:
         raise ValueError("rejected_signal_cooldown_minutes must be positive")
     if config.live_candidate_window_minutes <= 0:
         raise ValueError("live_candidate_window_minutes must be positive")
+    if not config.allowed_mtf_bias_for_buy or not config.allowed_mtf_bias_for_sell:
+        raise ValueError("allowed MTF bias lists cannot be empty")
 
 
 def generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> TradingSignal:
@@ -632,6 +642,14 @@ def _as_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def _as_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value.strip().upper(),)
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item).strip().upper() for item in value if str(item).strip())
+    return (str(value).strip().upper(),)
 
 
 generate_signal.required_history_candles = strategy_v50_pine.REQUIRED_HISTORY_CANDLES
