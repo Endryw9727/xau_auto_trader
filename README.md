@@ -140,6 +140,34 @@ input non validi come `MISSING`, `EMPTY`, `INVALID_COLUMNS`, `STALE` o
 `PRICE_MISMATCH` e li esclude dal bias finale. Se `XAUUSD_M15.csv` e vecchio
 ma `data/raw/xauusd.csv` e fresco, M15 usa la primary come fallback.
 
+## V51 MTF Directional Filter
+
+Il ciclo live-safe puo usare il report MTF come filtro direzionale read-only.
+Il filtro non genera segnali, non modifica rischio, lot size, SL o TP e puo
+solo bloccare un candidato V51 gia selezionato dagli altri gate.
+
+La pipeline e:
+
+    python scripts/update_mt5_timeframes.py
+    python scripts/run_v51_mtf_context_report.py
+    python scripts/run_v51_live_safe_cycle.py --dry-run
+
+Config opzionale in `config/strategy_v51.yaml`:
+
+    use_mtf_context_filter: false
+    require_mtf_data_ok: true
+    allowed_mtf_bias_for_buy: LONG_BIAS
+    allowed_mtf_bias_for_sell: SHORT_BIAS
+
+Quando `use_mtf_context_filter` e `true`, un BUY passa solo con
+`LONG_BIAS` e un SELL passa solo con `SHORT_BIAS`. `MIXED`,
+`NO_TRADE_CONTEXT`, bias sconosciuti o M1/M5 non OK con
+`require_mtf_data_ok=true` bloccano il trade con reason
+`mtf_direction_filter_blocked`. Il risultato viene scritto anche in
+`reports/demo_execution/v51_demo_execution_log.csv` nelle colonne
+`mtf_final_bias`, `mtf_filter_enabled`, `mtf_filter_passed` e
+`mtf_filter_reason`.
+
 ## MT5 Multi-Timeframe CSV Update
 
 Lo script aggiorna in modalita read-only i CSV multi-timeframe usati dal report

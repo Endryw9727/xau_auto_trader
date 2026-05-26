@@ -18,6 +18,8 @@ from src.market_data.data_freshness import DEFAULT_XAUUSD_CSV_PATH, analyze_data
 from src.market_data.mt5_csv_bridge import import_mt5_csv_bridge
 from src.market_data.mt5_readonly_data_updater import update_market_data_from_mt5_readonly
 from src.strategy_lab.strategy_v51_demo_intraday import DEFAULT_V51_CONFIG_PATH, load_v51_config
+from scripts.run_v51_mtf_context_report import run_v51_mtf_context_report
+from scripts.update_mt5_timeframes import run_mt5_timeframe_update
 
 
 DEFAULT_V51_LIVE_SAFE_CYCLE_LOG_PATH = DEFAULT_V51_DEMO_OUTPUT_DIR / "v51_live_safe_cycle.log"
@@ -31,6 +33,9 @@ class V51LiveSafeCycleResult:
     reason: str
     data_update_statuses: tuple[str, ...]
     csv_import_statuses: tuple[str, ...]
+    timeframe_update_status: str
+    mtf_context_status: str
+    mtf_final_bias: str | None
     freshness_status: str
     v51_called: bool
     v51_status: str | None = None
@@ -47,6 +52,8 @@ def run_v51_live_safe_cycle(
     now: pd.Timestamp | None = None,
     update_data_fn: Callable[..., list[Any]] = update_market_data_from_mt5_readonly,
     import_bridge_fn: Callable[..., list[Any]] = import_mt5_csv_bridge,
+    update_timeframes_fn: Callable[..., Any] = run_mt5_timeframe_update,
+    mtf_context_fn: Callable[..., Any] = run_v51_mtf_context_report,
     freshness_fn: Callable[..., Any] = analyze_data_freshness,
     execution_fn: Callable[..., Any] = run_v51_demo_execution_once,
 ) -> V51LiveSafeCycleResult:
@@ -62,6 +69,9 @@ def run_v51_live_safe_cycle(
             reason=str(exc),
             data_update_statuses=(),
             csv_import_statuses=(),
+            timeframe_update_status="NOT_RUN",
+            mtf_context_status="NOT_RUN",
+            mtf_final_bias=None,
             freshness_status="NOT_CHECKED",
             v51_called=False,
         )
@@ -76,6 +86,9 @@ def run_v51_live_safe_cycle(
             reason="allow_real_live=true blocks V51 live-safe cycle",
             data_update_statuses=(),
             csv_import_statuses=(),
+            timeframe_update_status="NOT_RUN",
+            mtf_context_status="NOT_RUN",
+            mtf_final_bias=None,
             freshness_status="NOT_CHECKED",
             v51_called=False,
         )
@@ -88,6 +101,11 @@ def run_v51_live_safe_cycle(
     import_results = _safe_call_results("MT5_CSV_BRIDGE_IMPORT", import_bridge_fn, lines)
     data_update_statuses = _result_statuses(update_results)
     csv_import_statuses = _result_statuses(import_results)
+    timeframe_update = _safe_call_single("MT5_TIMEFRAME_UPDATE", update_timeframes_fn, lines)
+    timeframe_update_status = str(getattr(timeframe_update, "status", "ERROR"))
+    mtf_context = _safe_call_single("V51_MTF_CONTEXT", mtf_context_fn, lines, config_path=config_path)
+    mtf_context_status = str(getattr(mtf_context, "status", "ERROR"))
+    mtf_final_bias = getattr(mtf_context, "final_bias", None)
 
     freshness = _call_freshness(freshness_fn, data_path, now)
     freshness_status = str(getattr(freshness, "status", "ERROR"))
@@ -100,6 +118,9 @@ def run_v51_live_safe_cycle(
             reason=freshness_detail,
             data_update_statuses=data_update_statuses,
             csv_import_statuses=csv_import_statuses,
+            timeframe_update_status=timeframe_update_status,
+            mtf_context_status=mtf_context_status,
+            mtf_final_bias=None if mtf_final_bias is None else str(mtf_final_bias),
             freshness_status=freshness_status,
             v51_called=False,
         )
@@ -112,6 +133,7 @@ def run_v51_live_safe_cycle(
     execution = execution_fn(
         config_path=config_path,
         output_dir=output_dir,
+        mtf_context_summary_path=getattr(mtf_context, "summary_path", None),
         dry_run=not execute_demo,
         **({"now": now} if now is not None else {}),
     )
@@ -120,6 +142,9 @@ def run_v51_live_safe_cycle(
         reason=str(getattr(execution, "reason", "")),
         data_update_statuses=data_update_statuses,
         csv_import_statuses=csv_import_statuses,
+        timeframe_update_status=timeframe_update_status,
+        mtf_context_status=mtf_context_status,
+        mtf_final_bias=None if mtf_final_bias is None else str(mtf_final_bias),
         freshness_status=freshness_status,
         v51_called=True,
         v51_status=str(getattr(execution, "status", "")),
@@ -181,6 +206,9 @@ def main() -> None:
     print(f"Reason: {result.reason}")
     print(f"Data update statuses: {', '.join(result.data_update_statuses) or 'n/a'}")
     print(f"CSV import statuses: {', '.join(result.csv_import_statuses) or 'n/a'}")
+    print(f"Timeframe update status: {result.timeframe_update_status}")
+    print(f"MTF context status: {result.mtf_context_status}")
+    print(f"MTF final bias: {result.mtf_final_bias}")
     print(f"Freshness status: {result.freshness_status}")
     print(f"V51 called: {result.v51_called}")
     print(f"V51 status: {result.v51_status}")
@@ -197,6 +225,18 @@ def _safe_call_results(label: str, fn: Callable[..., list[Any]], lines: list[str
     statuses = _result_statuses(results)
     lines.append(f"{label} statuses={','.join(statuses) or 'n/a'}")
     return results
+
+
+def _safe_call_single(label: str, fn: Callable[..., Any], lines: list[str], **kwargs: Any) -> Any:
+    try:
+        result = fn(**kwargs)
+    except Exception as exc:
+        lines.append(f"{label} ERROR {exc}")
+        return _SimpleStatus("ERROR", str(exc))
+    status = str(getattr(result, "status", "UNKNOWN"))
+    detail = f" final_bias={getattr(result, 'final_bias')}" if hasattr(result, "final_bias") else ""
+    lines.append(f"{label} status={status}{detail}")
+    return result
 
 
 def _call_freshness(fn: Callable[..., Any], data_path: str | Path, now: pd.Timestamp | None) -> Any:

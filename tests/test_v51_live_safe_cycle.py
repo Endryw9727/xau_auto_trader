@@ -41,6 +41,23 @@ def write_v51_config(tmp_path, **overrides):
     return path
 
 
+def timeframe_update_ok(calls):
+    def update_timeframes():
+        calls.append("timeframes")
+        return SimpleNamespace(status="OK", summary_path="timeframes.csv", latest_path="timeframes.txt")
+
+    return update_timeframes
+
+
+def mtf_context_ok(calls, *, final_bias="SHORT_BIAS"):
+    def mtf_context(**kwargs):
+        calls.append("mtf")
+        assert "config_path" in kwargs
+        return SimpleNamespace(status="OK", final_bias=final_bias, summary_path="mtf_summary.csv", latest_path="mtf_latest.txt")
+
+    return mtf_context
+
+
 def test_v51_live_safe_cycle_non_esegue_v51_se_dati_stale(tmp_path):
     calls = []
 
@@ -66,6 +83,8 @@ def test_v51_live_safe_cycle_non_esegue_v51_se_dati_stale(tmp_path):
         output_dir=tmp_path,
         update_data_fn=update_data,
         import_bridge_fn=import_bridge,
+        update_timeframes_fn=timeframe_update_ok(calls),
+        mtf_context_fn=mtf_context_ok(calls),
         freshness_fn=freshness,
         execution_fn=execute_v51,
         now=NOW,
@@ -73,7 +92,10 @@ def test_v51_live_safe_cycle_non_esegue_v51_se_dati_stale(tmp_path):
 
     assert result.status == "DATA_STALE"
     assert result.v51_called is False
-    assert calls == ["update", "import", "freshness"]
+    assert result.timeframe_update_status == "OK"
+    assert result.mtf_context_status == "OK"
+    assert result.mtf_final_bias == "SHORT_BIAS"
+    assert calls == ["update", "import", "timeframes", "mtf", "freshness"]
 
 
 def test_v51_live_safe_cycle_chiama_v51_se_dati_freschi(tmp_path):
@@ -94,6 +116,7 @@ def test_v51_live_safe_cycle_chiama_v51_se_dati_freschi(tmp_path):
     def execute_v51(**kwargs):
         calls.append("v51")
         assert kwargs["dry_run"] is False
+        assert kwargs["mtf_context_summary_path"] == "mtf_summary.csv"
         return SimpleNamespace(status="SENT", accepted=True, reason="demo order accepted")
 
     result = script.run_v51_live_safe_cycle(
@@ -103,6 +126,8 @@ def test_v51_live_safe_cycle_chiama_v51_se_dati_freschi(tmp_path):
         execute_demo=True,
         update_data_fn=update_data,
         import_bridge_fn=import_bridge,
+        update_timeframes_fn=timeframe_update_ok(calls),
+        mtf_context_fn=mtf_context_ok(calls),
         freshness_fn=freshness,
         execution_fn=execute_v51,
         now=NOW,
@@ -111,7 +136,10 @@ def test_v51_live_safe_cycle_chiama_v51_se_dati_freschi(tmp_path):
     assert result.status == "V51_EXECUTED"
     assert result.v51_called is True
     assert result.v51_status == "SENT"
-    assert calls == ["update", "import", "freshness", "v51"]
+    assert result.timeframe_update_status == "OK"
+    assert result.mtf_context_status == "OK"
+    assert result.mtf_final_bias == "SHORT_BIAS"
+    assert calls == ["update", "import", "timeframes", "mtf", "freshness", "v51"]
 
 
 def test_v51_live_safe_cycle_blocca_live_reale(tmp_path):
@@ -123,6 +151,8 @@ def test_v51_live_safe_cycle_blocca_live_reale(tmp_path):
         output_dir=tmp_path,
         update_data_fn=lambda: calls.append("update"),
         import_bridge_fn=lambda: calls.append("import"),
+        update_timeframes_fn=lambda: calls.append("timeframes"),
+        mtf_context_fn=lambda **_kwargs: calls.append("mtf"),
         freshness_fn=lambda *_args, **_kwargs: make_freshness("OK"),
         execution_fn=lambda **_kwargs: calls.append("v51"),
         now=NOW,
@@ -143,10 +173,12 @@ def test_v51_live_safe_cycle_data_update_avviene_prima_della_strategia(tmp_path)
         output_dir=tmp_path,
         update_data_fn=lambda: calls.append("update") or [SimpleNamespace(status="OK")],
         import_bridge_fn=lambda: calls.append("import") or [SimpleNamespace(status="OK")],
+        update_timeframes_fn=timeframe_update_ok(calls),
+        mtf_context_fn=mtf_context_ok(calls),
         freshness_fn=lambda *_args, **_kwargs: calls.append("freshness") or make_freshness("OK"),
         execution_fn=lambda **_kwargs: calls.append("v51") or SimpleNamespace(status="DRY_RUN", accepted=True, reason="ok"),
         now=NOW,
     )
 
     assert result.status == "V51_EXECUTED"
-    assert calls == ["update", "import", "freshness", "v51"]
+    assert calls == ["update", "import", "timeframes", "mtf", "freshness", "v51"]

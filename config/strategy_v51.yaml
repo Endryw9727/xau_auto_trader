@@ -38,3 +38,8 @@ rejected_signal_cooldown_minutes: 30
 live_candidate_window_minutes: 20
 require_latest_closed_candle_candidate: true
 selection_lookback_candles: 16
+
+use_mtf_context_filter: false
+require_mtf_data_ok: true
+allowed_mtf_bias_for_buy: LONG_BIAS
+allowed_mtf_bias_for_sell: SHORT_BIAS

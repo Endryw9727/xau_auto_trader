@@ -142,6 +142,26 @@ def force_selected_candidate(monkeypatch, candidate):
     monkeypatch.setattr(executor, "select_best_v51_candidate", lambda *args, **kwargs: (candidate, "forced candidate"))
 
 
+def write_mtf_summary(tmp_path, *, final_bias="SHORT_BIAS", m1_status="OK", m5_status="OK", m1_used=True, m5_used=True):
+    rows = []
+    for timeframe in ("D1", "H4", "H1", "M15", "M5", "M1"):
+        status = m5_status if timeframe == "M5" else m1_status if timeframe == "M1" else "OK"
+        used = m5_used if timeframe == "M5" else m1_used if timeframe == "M1" else True
+        rows.append(
+            {
+                "final_bias": final_bias,
+                "final_reason": "test mtf context",
+                "timeframe": timeframe,
+                "status": status,
+                "data_status": status,
+                "used_in_bias": used,
+            }
+        )
+    path = tmp_path / "v51_mtf_context_summary.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
 def make_feature_candidates() -> pd.DataFrame:
     index = pd.date_range("2026-05-23 10:00:00", periods=3, freq="15min", tz="UTC")
     return pd.DataFrame(
@@ -324,6 +344,133 @@ def test_v51_demo_executor_non_ritenta_signal_id_rifiutato_entra_cooldown(tmp_pa
 
     assert result.status == "NO_TRADE"
     assert result.reason.startswith("duplicate rejected signal cooldown")
+    assert fake.order_send_called is False
+
+
+def test_v51_mtf_filter_blocca_buy_quando_short_bias(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="SHORT_BIAS")
+    force_selected_candidate(monkeypatch, make_candidate(side="BUY"))
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    log = pd.read_csv(tmp_path / "v51_demo_execution_log.csv")
+    assert result.status == "NO_TRADE"
+    assert result.reason.startswith("mtf_direction_filter_blocked")
+    assert result.mtf_final_bias == "SHORT_BIAS"
+    assert result.mtf_filter_enabled is True
+    assert result.mtf_filter_passed is False
+    assert str(log.iloc[-1]["mtf_filter_passed"]).lower() == "false"
+    assert fake.order_send_called is False
+
+
+def test_v51_mtf_filter_consente_sell_quando_short_bias(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="SHORT_BIAS")
+    force_selected_candidate(monkeypatch, make_candidate(side="SELL"))
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    log = pd.read_csv(tmp_path / "v51_demo_execution_log.csv")
+    assert result.status == "DRY_RUN"
+    assert result.accepted is True
+    assert result.mtf_final_bias == "SHORT_BIAS"
+    assert result.mtf_filter_enabled is True
+    assert result.mtf_filter_passed is True
+    assert str(log.iloc[-1]["mtf_filter_passed"]).lower() == "true"
+    assert fake.order_send_called is False
+
+
+def test_v51_mtf_filter_blocca_sell_quando_long_bias(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="LONG_BIAS")
+    force_selected_candidate(monkeypatch, make_candidate(side="SELL"))
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    assert result.status == "NO_TRADE"
+    assert "mtf_direction_filter_blocked" in result.reason
+    assert result.mtf_final_bias == "LONG_BIAS"
+    assert fake.order_send_called is False
+
+
+def test_v51_mtf_filter_blocca_mixed_quando_abilitato(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="MIXED")
+    force_selected_candidate(monkeypatch, make_candidate(side="BUY"))
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    assert result.status == "NO_TRADE"
+    assert "final_bias=MIXED" in result.reason
+    assert fake.order_send_called is False
+
+
+def test_v51_mtf_filter_disabilitato_comportamento_invariato(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=False)
+    force_selected_candidate(monkeypatch, make_candidate(side="BUY"))
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=tmp_path / "missing_mtf_summary.csv",
+        now=NOW,
+    )
+
+    assert result.status == "DRY_RUN"
+    assert result.accepted is True
+    assert result.mtf_filter_enabled is False
+    assert result.mtf_filter_passed is True
+    assert fake.order_send_called is False
+
+
+def test_v51_mtf_filter_blocca_m1_m5_stale_se_require_data_ok(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True, require_mtf_data_ok=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="SHORT_BIAS", m1_status="STALE", m1_used=False)
+    force_selected_candidate(monkeypatch, make_candidate(side="SELL"))
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    assert result.status == "NO_TRADE"
+    assert "required M1/M5 context not OK" in result.reason
+    assert "M1=STALE" in result.reason
     assert fake.order_send_called is False
 
 
