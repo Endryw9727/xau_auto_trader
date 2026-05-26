@@ -148,6 +148,7 @@ MTF V51 e poi valida ogni file. Se MT5 non restituisce un timeframe, registra
 
     python scripts/update_mt5_timeframes.py
     python scripts/update_mt5_timeframes.py --symbol XAUUSD-P --data-dir data/raw --timeframes M1 M5 M15 M30 H1 H4
+    python scripts/update_mt5_timeframes.py --debug-mt5
 
 Output atteso:
 - data/raw/timeframes/XAUUSD_M1.csv
@@ -159,9 +160,20 @@ Output atteso:
 - reports/diagnostics/mt5_timeframe_update_latest.txt
 - reports/diagnostics/mt5_timeframe_update_summary.csv
 
-Troubleshooting: se M1/M5 mostrano `No candles returned`, aprire in MT5 i
-grafici M1 e M5 del simbolo, caricare lo storico con il tasto Home, controllare
-`Max bars in chart` nelle opzioni MT5 e poi rilanciare:
+Lo script usa direttamente le costanti MT5 (`TIMEFRAME_M1`, `TIMEFRAME_M5`,
+`TIMEFRAME_M15`, `TIMEFRAME_M30`, `TIMEFRAME_H1`, `TIMEFRAME_H4`) e prova in
+ordine `copy_rates_from_pos`, `copy_rates_from` con datetime UTC aware e
+`copy_rates_range`. La modalita `--debug-mt5` stampa lo stesso test diretto per
+ogni timeframe, includendo righe restituite e `last_error`.
+
+Troubleshooting: se M1/M5 mostrano `No candles returned` o
+`WARNING_NO_MT5_CANDLES`, eseguire prima:
+
+    python scripts/update_mt5_timeframes.py --debug-mt5
+
+Se anche il debug diretto non restituisce righe, aprire in MT5 i grafici M1 e M5
+del simbolo, caricare lo storico con il tasto Home, controllare `Max bars in
+chart` nelle opzioni MT5 e poi rilanciare:
 
     python scripts/update_mt5_timeframes.py
 

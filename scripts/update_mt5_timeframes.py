@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 import sys
 from typing import Any
@@ -33,7 +33,6 @@ from src.market_data.mt5_readonly_data_updater import (
 )
 from src.market_data.timeframe_loader import (
     TIMEFRAME_FILES,
-    TIMEFRAME_MINUTES,
     detect_csv_separator,
     detect_header_or_no_header,
     normalize_ohlc_columns,
@@ -46,6 +45,8 @@ SUMMARY_FILENAME = "mt5_timeframe_update_summary.csv"
 LATEST_FILENAME = "mt5_timeframe_update_latest.txt"
 DEFAULT_TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "H4")
 DEFAULT_MAX_BARS = {"M1": 100000, "M5": 100000, "M15": 100000, "M30": 50000, "H1": 20000, "H4": 10000}
+SAFE_CAPS = {"M1": 10000, "M5": 10000, "M15": 10000, "M30": 50000, "H1": 20000, "H4": 10000}
+RANGE_LOOKBACK_DAYS = {"M1": 7, "M5": 7, "M15": 7, "M30": 30, "H1": 90, "H4": 365}
 
 SUMMARY_COLUMNS = [
     "checked_at",
@@ -224,13 +225,12 @@ def update_timeframe_from_mt5(
             symbol_selected=symbol_selected,
         )
 
-    rates, method_used, error_text = fetch_rates_with_fallbacks(
+    rates, method_used, error_text = fetch_rates(
         mt5,
-        symbol=symbol,
-        timeframe=normalized,
-        mt5_timeframe=mt5_timeframe,
-        bars=max_bars,
-        now=now,
+        symbol,
+        normalized,
+        mt5_timeframe,
+        max_bars,
     )
     candles_returned = 0 if rates is None else int(len(rates))
     if candles_returned == 0:
@@ -341,11 +341,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR, help="Root data directory.")
     parser.add_argument("--timeframes", nargs="+", default=list(DEFAULT_TIMEFRAMES), help="Timeframes to update.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Diagnostics output directory.")
+    parser.add_argument("--debug-mt5", action="store_true", help="Print direct MT5 API candle diagnostics for each timeframe.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.debug_mt5:
+        print(run_mt5_debug(symbol=args.symbol, timeframes=tuple(args.timeframes)))
+        return
+
     result = run_mt5_timeframe_update(
         symbol=args.symbol,
         data_dir=args.data_dir,
@@ -436,28 +441,22 @@ def build_latest_text(summary: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def fetch_rates_with_fallbacks(
+def fetch_rates(
     mt5: Any,
-    *,
     symbol: str,
-    timeframe: str,
-    mt5_timeframe: Any,
+    timeframe_name: str,
+    timeframe_constant: Any,
     bars: int,
-    now: pd.Timestamp,
 ) -> tuple[Any | None, str, str]:
-    """Try MT5 candle methods in a deterministic diagnostic order."""
+    """Try the direct MT5 candle calls that work in VPS diagnostics."""
+    timeframe = normalize_timeframe(timeframe_name)
+    request_bars = min(max(1, int(bars)), int(SAFE_CAPS[timeframe]))
+    now_utc = datetime.now(timezone.utc)
+    start_utc = now_utc - timedelta(days=int(RANGE_LOOKBACK_DAYS[timeframe]))
     attempts = [
-        ("copy_rates_from_pos", lambda: mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, int(bars))),
-        ("copy_rates_from", lambda: mt5.copy_rates_from(symbol, mt5_timeframe, as_utc_datetime(now), int(bars))),
-        (
-            "copy_rates_range",
-            lambda: mt5.copy_rates_range(
-                symbol,
-                mt5_timeframe,
-                as_utc_datetime(now) - timedelta(minutes=int(TIMEFRAME_MINUTES[timeframe]) * int(bars) * 2),
-                as_utc_datetime(now),
-            ),
-        ),
+        ("copy_rates_from_pos", lambda: mt5.copy_rates_from_pos(symbol, timeframe_constant, 0, request_bars)),
+        ("copy_rates_from", lambda: mt5.copy_rates_from(symbol, timeframe_constant, now_utc, request_bars)),
+        ("copy_rates_range", lambda: mt5.copy_rates_range(symbol, timeframe_constant, start_utc, now_utc)),
     ]
     errors = []
     for method_name, call in attempts:
@@ -471,9 +470,66 @@ def fetch_rates_with_fallbacks(
             errors.append(f"{method_name}: exception={exc}; last_error={last_error_text(mt5)}")
             continue
         if rates is not None and len(rates) > 0:
-            return rates, method_name, "; ".join(errors)
+            return trim_rates(rates, request_bars), method_name, "; ".join(errors)
         errors.append(f"{method_name}: empty; last_error={last_error_text(mt5)}")
     return None, "none", "; ".join(errors)
+
+
+def trim_rates(rates: Any, request_bars: int) -> Any:
+    """Keep at most the most recent requested bars without changing MT5 row shape."""
+    try:
+        if len(rates) <= request_bars:
+            return rates
+        return rates[-request_bars:]
+    except Exception:
+        return rates
+
+
+def run_mt5_debug(*, symbol: str = "XAUUSD-P", timeframes: tuple[str, ...] | list[str] = DEFAULT_TIMEFRAMES) -> str:
+    """Run direct MT5 candle API diagnostics without writing files."""
+    safety_error = validate_readonly_safety()
+    if safety_error:
+        return f"MT5 direct debug blocked by safety config: {safety_error}"
+    mt5 = import_mt5_module()
+    if mt5 is None:
+        return "MT5 direct debug unavailable: MetaTrader5 package is not installed."
+
+    lines = [
+        "MT5 Direct Timeframe Debug",
+        "=" * 72,
+        "No orders were sent. This diagnostic reads MT5 candles only.",
+    ]
+    initialized = False
+    try:
+        initialize = getattr(mt5, "initialize", None)
+        initialized = bool(initialize()) if callable(initialize) else False
+        lines.append(f"initialize={initialized} last_error={last_error_text(mt5)}")
+        if not initialized:
+            return "\n".join(lines)
+
+        selected = symbol_select_status(mt5, symbol)
+        lines.append(f"symbol_select({symbol!r}, True)={selected} last_error={last_error_text(mt5)}")
+        for timeframe in tuple(normalize_timeframe(item) for item in timeframes):
+            constant = mt5_timeframe_constant(mt5, timeframe)
+            now_utc = datetime.now(timezone.utc)
+            start_utc = now_utc - timedelta(days=int(RANGE_LOOKBACK_DAYS[timeframe]))
+            lines.append(f"{timeframe} constant={constant}:")
+            for method_name, call in (
+                ("copy_rates_from_pos", lambda: mt5.copy_rates_from_pos(symbol, constant, 0, 10)),
+                ("copy_rates_from", lambda: mt5.copy_rates_from(symbol, constant, now_utc, 10)),
+                ("copy_rates_range", lambda: mt5.copy_rates_range(symbol, constant, start_utc, now_utc)),
+            ):
+                try:
+                    rates = call()
+                    rows = 0 if rates is None else len(rates)
+                    lines.append(f"  {method_name} => {rows} rows, last_error={last_error_text(mt5)}")
+                except Exception as exc:
+                    lines.append(f"  {method_name} => exception={exc}, last_error={last_error_text(mt5)}")
+    finally:
+        shutdown = getattr(mt5, "shutdown", None)
+        if initialized and callable(shutdown):
+            shutdown()
+    return "\n".join(lines)
 
 
 def fallback_primary_m15(

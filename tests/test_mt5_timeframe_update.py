@@ -16,11 +16,13 @@ class FakeMT5:
     TIMEFRAME_H1 = 60
     TIMEFRAME_H4 = 240
 
-    def __init__(self, *, empty_timeframes=None):
+    def __init__(self, *, empty_timeframes=None, empty_from_pos_timeframes=None):
         self.initialized = False
         self.empty_timeframes = set(empty_timeframes or [])
+        self.empty_from_pos_timeframes = set(empty_from_pos_timeframes or [])
         self.selected = []
         self._last_error = "OK"
+        self.calls = []
 
     def initialize(self):
         self.initialized = True
@@ -43,9 +45,30 @@ class FakeMT5:
         return self._last_error
 
     def copy_rates_from_pos(self, symbol, timeframe, start_pos, count):
-        if timeframe in self.empty_timeframes:
+        self.calls.append(("copy_rates_from_pos", symbol, timeframe, start_pos, count))
+        if timeframe in self.empty_timeframes or timeframe in self.empty_from_pos_timeframes:
             self._last_error = f"no history for timeframe {timeframe}"
             return []
+        self._last_error = (1, "Success")
+        return self._rates()
+
+    def copy_rates_from(self, symbol, timeframe, date_from, count):
+        self.calls.append(("copy_rates_from", symbol, timeframe, date_from, count))
+        if timeframe in self.empty_timeframes:
+            self._last_error = f"copy_rates_from empty for timeframe {timeframe}"
+            return []
+        self._last_error = (1, "Success")
+        return self._rates()
+
+    def copy_rates_range(self, symbol, timeframe, start, end):
+        self.calls.append(("copy_rates_range", symbol, timeframe, start, end))
+        if timeframe in self.empty_timeframes:
+            self._last_error = f"copy_rates_range empty for timeframe {timeframe}"
+            return []
+        self._last_error = (1, "Success")
+        return self._rates()
+
+    def _rates(self):
         index = pd.date_range(end=NOW, periods=5, freq="1min")
         return [
             {
@@ -58,18 +81,6 @@ class FakeMT5:
             }
             for position, timestamp in enumerate(index)
         ]
-
-    def copy_rates_from(self, symbol, timeframe, date_from, count):
-        if timeframe in self.empty_timeframes:
-            self._last_error = f"copy_rates_from empty for timeframe {timeframe}"
-            return []
-        return self.copy_rates_from_pos(symbol, timeframe, 0, count)
-
-    def copy_rates_range(self, symbol, timeframe, start, end):
-        if timeframe in self.empty_timeframes:
-            self._last_error = f"copy_rates_range empty for timeframe {timeframe}"
-            return []
-        return self.copy_rates_from_pos(symbol, timeframe, 0, 5)
 
 
 def write_timeframe_csv(path, rows):
@@ -146,6 +157,96 @@ def test_mt5_timeframe_update_produce_report_summary(tmp_path):
     assert summary.iloc[0]["update_status"] == "OK"
     assert summary.iloc[0]["validation_status"] == "OK"
     assert "M1:" in latest
+
+
+def test_mt5_timeframe_update_m1_fetch_usa_timeframe_m1_intero(tmp_path):
+    fake = FakeMT5()
+
+    updater.run_mt5_timeframe_update(
+        data_dir=tmp_path / "data",
+        output_dir=tmp_path / "diagnostics",
+        timeframes=("M1",),
+        now=NOW,
+        mt5_module=fake,
+    )
+
+    method, _, timeframe, _, count = fake.calls[0]
+    assert method == "copy_rates_from_pos"
+    assert timeframe == fake.TIMEFRAME_M1
+    assert isinstance(timeframe, int)
+    assert count == updater.SAFE_CAPS["M1"]
+
+
+def test_mt5_timeframe_update_m5_fetch_usa_timeframe_m5_intero(tmp_path):
+    fake = FakeMT5()
+
+    updater.run_mt5_timeframe_update(
+        data_dir=tmp_path / "data",
+        output_dir=tmp_path / "diagnostics",
+        timeframes=("M5",),
+        now=NOW,
+        mt5_module=fake,
+    )
+
+    method, _, timeframe, _, count = fake.calls[0]
+    assert method == "copy_rates_from_pos"
+    assert timeframe == fake.TIMEFRAME_M5
+    assert isinstance(timeframe, int)
+    assert count == updater.SAFE_CAPS["M5"]
+
+
+def test_mt5_timeframe_update_m15_fetch_usa_timeframe_m15_intero(tmp_path):
+    fake = FakeMT5()
+
+    updater.run_mt5_timeframe_update(
+        data_dir=tmp_path / "data",
+        output_dir=tmp_path / "diagnostics",
+        timeframes=("M15",),
+        now=NOW,
+        mt5_module=fake,
+    )
+
+    method, _, timeframe, _, count = fake.calls[0]
+    assert method == "copy_rates_from_pos"
+    assert timeframe == fake.TIMEFRAME_M15
+    assert isinstance(timeframe, int)
+    assert count == updater.SAFE_CAPS["M15"]
+
+
+def test_mt5_timeframe_update_from_pos_success_non_prova_altri_metodi(tmp_path):
+    fake = FakeMT5()
+
+    result = updater.run_mt5_timeframe_update(
+        data_dir=tmp_path / "data",
+        output_dir=tmp_path / "diagnostics",
+        timeframes=("M1",),
+        now=NOW,
+        mt5_module=fake,
+    )
+
+    summary = pd.read_csv(result.summary_path)
+    assert summary.iloc[0]["method_used"] == "copy_rates_from_pos"
+    assert [call[0] for call in fake.calls] == ["copy_rates_from_pos"]
+
+
+def test_mt5_timeframe_update_from_pos_fallisce_copy_rates_from_aggiorna(tmp_path):
+    fake = FakeMT5(empty_from_pos_timeframes={1})
+
+    result = updater.run_mt5_timeframe_update(
+        data_dir=tmp_path / "data",
+        output_dir=tmp_path / "diagnostics",
+        timeframes=("M1",),
+        now=NOW,
+        mt5_module=fake,
+    )
+
+    summary = pd.read_csv(result.summary_path)
+    assert summary.iloc[0]["update_status"] == "OK"
+    assert summary.iloc[0]["method_used"] == "copy_rates_from"
+    assert [call[0] for call in fake.calls] == ["copy_rates_from_pos", "copy_rates_from"]
+    copy_from_call = fake.calls[1]
+    assert copy_from_call[2] == fake.TIMEFRAME_M1
+    assert copy_from_call[3].tzinfo is not None
 
 
 def test_mt5_timeframe_update_m15_fallback_da_primary_csv(tmp_path):
