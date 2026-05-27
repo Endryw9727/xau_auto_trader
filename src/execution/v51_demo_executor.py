@@ -367,43 +367,47 @@ def run_v51_demo_execution_once(
             append_v51_demo_log(output_dir, result, event="candidate_gate")
             return result
 
+        pre_mtf_telemetry = {
+            **telemetry,
+            **_mtf_audit_telemetry(
+                mtf_audit,
+                passed=False if mtf_audit.enabled else True,
+                reason="candidate_failed_before_mtf_filter" if mtf_audit.enabled else "mtf_filter_disabled",
+            ),
+        }
+
+        cooldown_reason = _rejected_signal_cooldown_reason(execution_log, candidate.signal_id, config, now)
+        if cooldown_reason is not None:
+            result = _result(
+                False,
+                "NO_TRADE",
+                cooldown_reason,
+                dry_run=dry_run,
+                candidate=candidate,
+                telemetry=pre_mtf_telemetry,
+            )
+            append_v51_demo_log(output_dir, result, event="no_trade")
+            return result
+
         time_guard_reason = _candidate_time_guard_reason(candidate, config, latest_closed_candle_time, now)
         if time_guard_reason is not None:
             telemetry = {
-                **telemetry,
+                **pre_mtf_telemetry,
                 **_time_alignment_telemetry(
                     now,
                     latest_closed_candle_time=latest_closed_candle_time,
                     candidate=candidate,
                     status=time_guard_reason,
                 ),
-                **_mtf_audit_telemetry(
-                    mtf_audit,
-                    passed=False if mtf_audit.enabled else True,
-                    reason="candidate_failed_before_mtf_filter" if mtf_audit.enabled else "mtf_filter_disabled",
-                ),
             }
             result = _result(False, "NO_TRADE", time_guard_reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
-            append_v51_demo_log(output_dir, result, event="no_trade")
-            return result
-
-        mtf_filter = evaluate_mtf_direction_filter(candidate, config, mtf_context_summary_path, audit=mtf_audit)
-        telemetry = _with_mtf_telemetry(telemetry, mtf_filter)
-        if not mtf_filter.passed:
-            result = _result(False, "NO_TRADE", mtf_filter.reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
-            append_v51_demo_log(output_dir, result, event="no_trade")
-            return result
-
-        cooldown_reason = _rejected_signal_cooldown_reason(execution_log, candidate.signal_id, config, now)
-        if cooldown_reason is not None:
-            result = _result(False, "NO_TRADE", cooldown_reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
         stale_candidate_reason = _candidate_stale_reason(candidate, config, latest_closed_candle_time)
         if stale_candidate_reason is not None:
             telemetry = {
-                **telemetry,
+                **pre_mtf_telemetry,
                 **_time_alignment_telemetry(
                     now,
                     latest_closed_candle_time=latest_closed_candle_time,
@@ -412,6 +416,13 @@ def run_v51_demo_execution_once(
                 ),
             }
             result = _result(False, "NO_TRADE", stale_candidate_reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
+            append_v51_demo_log(output_dir, result, event="no_trade")
+            return result
+
+        mtf_filter = evaluate_mtf_direction_filter(candidate, config, mtf_context_summary_path, audit=mtf_audit)
+        telemetry = _with_mtf_telemetry(telemetry, mtf_filter)
+        if not mtf_filter.passed:
+            result = _result(False, "NO_TRADE", mtf_filter.reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 

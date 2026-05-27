@@ -290,17 +290,25 @@ def test_v51_demo_executor_blocca_dati_stale(tmp_path):
 
 
 def test_v51_demo_executor_rifiuta_candidate_stale_prima_dello_slippage(tmp_path, monkeypatch):
-    config_path = write_v51_config(tmp_path)
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="MIXED")
     stale_candidate = make_candidate(candle_time=NOW - pd.Timedelta(minutes=60), entry_price=2400.0)
     force_selected_candidate(monkeypatch, stale_candidate)
     fake = FakeV51MT5(bid=2402.90, ask=2403.00)
 
-    result = executor.run_v51_demo_execution_once(config_path=config_path, output_dir=tmp_path, mt5_module=fake, now=NOW)
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
 
     assert result.status == "NO_TRADE"
     assert result.reason == "candidate_stale"
     assert result.time_alignment_status == "candidate_stale"
     assert result.slippage_points is None
+    assert result.mtf_filter_reason == "candidate_failed_before_mtf_filter"
     assert fake.order_send_called is False
 
 
@@ -324,17 +332,25 @@ def test_v51_demo_executor_rifiuta_candidate_futuro(tmp_path, monkeypatch):
 
 
 def test_v51_demo_executor_candidate_fresco_arriva_al_controllo_successivo(tmp_path, monkeypatch):
-    config_path = write_v51_config(tmp_path)
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="LONG_BIAS")
     fresh_candidate = make_candidate(candle_time=NOW - pd.Timedelta(minutes=15), entry_price=2400.0)
     force_selected_candidate(monkeypatch, fresh_candidate)
     fake = FakeV51MT5(bid=2402.90, ask=2403.00)
 
-    result = executor.run_v51_demo_execution_once(config_path=config_path, output_dir=tmp_path, mt5_module=fake, now=NOW)
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
 
     assert result.status == "NO_TRADE"
     assert "slippage" in result.reason
     assert result.slippage_points == pytest.approx(300.0)
     assert result.adverse_slippage_points == pytest.approx(300.0)
+    assert result.mtf_filter_reason == "mtf_direction_filter_passed"
     assert fake.order_send_called is False
 
 
@@ -428,7 +444,8 @@ def test_v51_demo_executor_fresh_valid_mtf_price_accettato_dry_run(tmp_path, mon
 
 
 def test_v51_demo_executor_non_ritenta_signal_id_rifiutato_entra_cooldown(tmp_path, monkeypatch):
-    config_path = write_v51_config(tmp_path, rejected_signal_cooldown_minutes=30)
+    config_path = write_v51_config(tmp_path, rejected_signal_cooldown_minutes=30, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="MIXED")
     candidate = make_candidate()
     force_selected_candidate(monkeypatch, candidate)
     pd.DataFrame(
@@ -450,10 +467,17 @@ def test_v51_demo_executor_non_ritenta_signal_id_rifiutato_entra_cooldown(tmp_pa
     ).to_csv(tmp_path / "v51_demo_execution_log.csv", index=False)
     fake = FakeV51MT5()
 
-    result = executor.run_v51_demo_execution_once(config_path=config_path, output_dir=tmp_path, mt5_module=fake, now=NOW)
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
 
     assert result.status == "NO_TRADE"
     assert result.reason.startswith("duplicate rejected signal cooldown")
+    assert result.mtf_filter_reason == "candidate_failed_before_mtf_filter"
     assert fake.order_send_called is False
 
 
@@ -650,7 +674,8 @@ def test_v51_demo_executor_allow_real_live_resta_false():
 
 
 def test_v51_demo_executor_non_apre_ordini_se_freshness_required_e_candidate_vecchio(tmp_path, monkeypatch):
-    config_path = write_v51_config(tmp_path, candidate_freshness_required=True)
+    config_path = write_v51_config(tmp_path, candidate_freshness_required=True, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="MIXED")
     stale_candidate = make_candidate(candle_time=NOW - pd.Timedelta(minutes=60))
     force_selected_candidate(monkeypatch, stale_candidate)
     fake = FakeV51MT5()
@@ -659,12 +684,14 @@ def test_v51_demo_executor_non_apre_ordini_se_freshness_required_e_candidate_vec
         config_path=config_path,
         output_dir=tmp_path,
         mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
         dry_run=False,
         now=NOW,
     )
 
     assert result.status == "NO_TRADE"
     assert result.reason == "candidate_stale"
+    assert result.mtf_filter_reason == "candidate_failed_before_mtf_filter"
     assert fake.order_send_called is False
 
 
