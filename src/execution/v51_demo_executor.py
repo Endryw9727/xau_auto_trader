@@ -154,6 +154,16 @@ class MTFDirectionFilterResult:
     reason: str
 
 
+@dataclass(frozen=True)
+class MTFAuditContext:
+    """MTF context loaded once for audit fields on every V51 execution row."""
+
+    enabled: bool
+    final_bias: str
+    summary: pd.DataFrame | None
+    data_issues: tuple[str, ...]
+
+
 def run_v51_demo_execution_once(
     *,
     config_path: str | Path = DEFAULT_V51_CONFIG_PATH,
@@ -166,15 +176,27 @@ def run_v51_demo_execution_once(
     """Run one gated V51 demo execution attempt."""
     config = load_v51_config(config_path)
     now = _utc_now(now)
+    mtf_audit = load_mtf_audit_context(config, mtf_context_summary_path)
+    no_candidate_mtf_telemetry = _mtf_audit_telemetry(
+        mtf_audit,
+        passed=False if mtf_audit.enabled else True,
+        reason="no_v51_candidate_to_filter" if mtf_audit.enabled else "mtf_filter_disabled",
+    )
     gate_error = _validate_execution_gates(config)
     if gate_error is not None:
-        result = _result(False, "REJECTED", gate_error, dry_run=dry_run)
+        result = _result(False, "REJECTED", gate_error, dry_run=dry_run, telemetry=no_candidate_mtf_telemetry)
         append_v51_demo_log(output_dir, result, event="config_gate")
         return result
 
     mt5 = mt5_module or import_mt5_module()
     if mt5 is None:
-        result = _result(False, "MT5_NOT_AVAILABLE", "Python MetaTrader5 package is not available.", dry_run=dry_run)
+        result = _result(
+            False,
+            "MT5_NOT_AVAILABLE",
+            "Python MetaTrader5 package is not available.",
+            dry_run=dry_run,
+            telemetry=no_candidate_mtf_telemetry,
+        )
         append_v51_demo_log(output_dir, result, event="mt5_unavailable")
         return result
 
@@ -182,25 +204,37 @@ def run_v51_demo_execution_once(
     try:
         initialized = bool(mt5.initialize()) if callable(getattr(mt5, "initialize", None)) else False
         if not initialized:
-            result = _result(False, "ERROR", f"MT5_NOT_INITIALIZED: {_last_error(mt5)}", dry_run=dry_run)
+            result = _result(
+                False,
+                "ERROR",
+                f"MT5_NOT_INITIALIZED: {_last_error(mt5)}",
+                dry_run=dry_run,
+                telemetry=no_candidate_mtf_telemetry,
+            )
             append_v51_demo_log(output_dir, result, event="mt5_initialize")
             return result
 
         market_error = _validate_mt5_demo_state(mt5, config)
         if market_error is not None:
-            result = _result(False, "REJECTED", market_error, dry_run=dry_run)
+            result = _result(False, "REJECTED", market_error, dry_run=dry_run, telemetry=no_candidate_mtf_telemetry)
             append_v51_demo_log(output_dir, result, event="broker_gate")
             return result
 
         try:
             rates = read_mt5_closed_rates(mt5, config)
         except Exception as exc:
-            result = _result(False, "NO_TRADE", f"MT5 data unavailable: {exc}", dry_run=dry_run)
+            result = _result(
+                False,
+                "NO_TRADE",
+                f"MT5 data unavailable: {exc}",
+                dry_run=dry_run,
+                telemetry=no_candidate_mtf_telemetry,
+            )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
         stale_reason = _stale_data_reason(rates, config, now)
         if stale_reason is not None:
-            result = _result(False, "NO_TRADE", stale_reason, dry_run=dry_run)
+            result = _result(False, "NO_TRADE", stale_reason, dry_run=dry_run, telemetry=no_candidate_mtf_telemetry)
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
@@ -215,12 +249,19 @@ def run_v51_demo_execution_once(
                 "NO_TRADE",
                 f"max trades per day reached ({config.max_trades_per_day})",
                 dry_run=dry_run,
+                telemetry=no_candidate_mtf_telemetry,
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
         if _has_open_v51_position(mt5, config):
-            result = _result(False, "NO_TRADE", "existing open V51_DEMO position blocks new demo order", dry_run=dry_run)
+            result = _result(
+                False,
+                "NO_TRADE",
+                "existing open V51_DEMO position blocks new demo order",
+                dry_run=dry_run,
+                telemetry=no_candidate_mtf_telemetry,
+            )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
@@ -233,7 +274,10 @@ def run_v51_demo_execution_once(
                 "NO_TRADE",
                 f"spread {spread_points:.1f} points exceeds max {config.max_spread_points:.1f}",
                 dry_run=dry_run,
-                telemetry=_market_telemetry(config, tick, spread_points=spread_points),
+                telemetry={
+                    **_market_telemetry(config, tick, spread_points=spread_points),
+                    **no_candidate_mtf_telemetry,
+                },
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
@@ -259,7 +303,8 @@ def run_v51_demo_execution_once(
                     tick=tick,
                     spread_points=spread_points,
                     selection_reason=no_trade_reason,
-                ),
+                )
+                | no_candidate_mtf_telemetry,
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
@@ -276,11 +321,19 @@ def run_v51_demo_execution_once(
             selection_reason=selection_reason,
         )
         if candidate_error is not None:
+            telemetry = {
+                **telemetry,
+                **_mtf_audit_telemetry(
+                    mtf_audit,
+                    passed=False if mtf_audit.enabled else True,
+                    reason="candidate_failed_before_mtf_filter" if mtf_audit.enabled else "mtf_filter_disabled",
+                ),
+            }
             result = _result(False, "REJECTED", candidate_error, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
             append_v51_demo_log(output_dir, result, event="candidate_gate")
             return result
 
-        mtf_filter = evaluate_mtf_direction_filter(candidate, config, mtf_context_summary_path)
+        mtf_filter = evaluate_mtf_direction_filter(candidate, config, mtf_context_summary_path, audit=mtf_audit)
         telemetry = _with_mtf_telemetry(telemetry, mtf_filter)
         if not mtf_filter.passed:
             result = _result(False, "NO_TRADE", mtf_filter.reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
@@ -674,73 +727,59 @@ def evaluate_mtf_direction_filter(
     candidate: V51DemoCandidate,
     config: V51DemoIntradayConfig,
     summary_path: str | Path | None = DEFAULT_V51_MTF_CONTEXT_SUMMARY_PATH,
+    *,
+    audit: MTFAuditContext | None = None,
 ) -> MTFDirectionFilterResult:
     """Apply the optional read-only MTF directional filter to a selected candidate."""
-    if not config.use_mtf_context_filter:
-        return MTFDirectionFilterResult(False, True, "", "mtf context filter disabled")
-    if summary_path is None:
-        return MTFDirectionFilterResult(
-            True,
-            False,
-            "",
-            "mtf_direction_filter_blocked: MTF context summary path is not configured",
-        )
-
-    path = Path(summary_path)
-    if not path.exists() or path.stat().st_size == 0:
-        return MTFDirectionFilterResult(
-            True,
-            False,
-            "",
-            f"mtf_direction_filter_blocked: MTF context summary missing: {path}",
-        )
-    try:
-        summary = pd.read_csv(path)
-    except Exception as exc:
-        return MTFDirectionFilterResult(
-            True,
-            False,
-            "",
-            f"mtf_direction_filter_blocked: cannot read MTF context summary: {exc}",
-        )
-    if summary.empty or "final_bias" not in summary.columns:
-        return MTFDirectionFilterResult(
-            True,
-            False,
-            "",
-            "mtf_direction_filter_blocked: MTF context summary has no final_bias",
-        )
-
-    bias_values = summary["final_bias"].dropna()
-    final_bias = "" if bias_values.empty else str(bias_values.iloc[0]).strip().upper()
-    if config.require_mtf_data_ok:
-        missing = _required_mtf_data_issues(summary)
-        if missing:
-            return MTFDirectionFilterResult(
-                True,
-                False,
-                final_bias,
-                "mtf_direction_filter_blocked: required M1/M5 context not OK: " + ", ".join(missing),
-            )
+    audit = audit or load_mtf_audit_context(config, summary_path)
+    if not audit.enabled:
+        return MTFDirectionFilterResult(False, True, audit.final_bias, "mtf_filter_disabled")
+    if config.require_mtf_data_ok and audit.data_issues:
+        return MTFDirectionFilterResult(True, False, audit.final_bias, "mtf_data_not_ok")
 
     allowed = config.allowed_mtf_bias_for_buy if candidate.side == "BUY" else config.allowed_mtf_bias_for_sell
-    if final_bias not in allowed:
-        return MTFDirectionFilterResult(
-            True,
-            False,
-            final_bias,
-            (
-                "mtf_direction_filter_blocked: "
-                f"side={candidate.side}, final_bias={final_bias or 'UNKNOWN'}, "
-                f"allowed={','.join(allowed)}"
-            ),
-        )
-    return MTFDirectionFilterResult(
-        True,
-        True,
-        final_bias,
-        f"mtf_direction_filter_passed: side={candidate.side}, final_bias={final_bias}",
-    )
+    if audit.final_bias == "MIXED":
+        return MTFDirectionFilterResult(True, False, audit.final_bias, "mtf_final_bias_mixed")
+    if audit.final_bias not in allowed:
+        return MTFDirectionFilterResult(True, False, audit.final_bias, "mtf_direction_filter_blocked")
+    return MTFDirectionFilterResult(True, True, audit.final_bias, "mtf_direction_filter_passed")
+
+
+def load_mtf_audit_context(
+    config: V51DemoIntradayConfig,
+    summary_path: str | Path | None = DEFAULT_V51_MTF_CONTEXT_SUMMARY_PATH,
+) -> MTFAuditContext:
+    """Load MTF context once so all execution outcomes carry audit fields."""
+    enabled = bool(config.use_mtf_context_filter)
+    summary = _read_mtf_summary(summary_path)
+    if summary is None:
+        return MTFAuditContext(enabled, "UNKNOWN", None, ("summary=UNAVAILABLE",))
+    final_bias = _summary_final_bias(summary)
+    data_issues = tuple(_required_mtf_data_issues(summary))
+    return MTFAuditContext(enabled, final_bias, summary, data_issues)
+
+
+def _read_mtf_summary(summary_path: str | Path | None) -> pd.DataFrame | None:
+    if summary_path is None:
+        return None
+    path = Path(summary_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    try:
+        summary = pd.read_csv(path)
+    except Exception:
+        return None
+    return summary if not summary.empty else None
+
+
+def _summary_final_bias(summary: pd.DataFrame) -> str:
+    if "final_bias" not in summary.columns:
+        return "UNKNOWN"
+    bias_values = summary["final_bias"].dropna()
+    if bias_values.empty:
+        return "UNKNOWN"
+    final_bias = str(bias_values.iloc[0]).strip().upper()
+    return final_bias or "UNKNOWN"
 
 
 def _required_mtf_data_issues(summary: pd.DataFrame) -> list[str]:
@@ -771,6 +810,20 @@ def _with_mtf_telemetry(telemetry: dict[str, Any], mtf_filter: MTFDirectionFilte
         }
     )
     return result
+
+
+def _mtf_audit_telemetry(
+    audit: MTFAuditContext,
+    *,
+    passed: bool | None,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "mtf_final_bias": audit.final_bias,
+        "mtf_filter_enabled": audit.enabled,
+        "mtf_filter_passed": passed,
+        "mtf_filter_reason": reason,
+    }
 
 
 def _validate_execution_gates(config: V51DemoIntradayConfig) -> str | None:

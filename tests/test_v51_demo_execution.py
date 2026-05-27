@@ -363,11 +363,12 @@ def test_v51_mtf_filter_blocca_buy_quando_short_bias(tmp_path, monkeypatch):
 
     log = pd.read_csv(tmp_path / "v51_demo_execution_log.csv")
     assert result.status == "NO_TRADE"
-    assert result.reason.startswith("mtf_direction_filter_blocked")
+    assert result.reason == "mtf_direction_filter_blocked"
     assert result.mtf_final_bias == "SHORT_BIAS"
     assert result.mtf_filter_enabled is True
     assert result.mtf_filter_passed is False
     assert str(log.iloc[-1]["mtf_filter_passed"]).lower() == "false"
+    assert log.iloc[-1]["mtf_filter_reason"] == "mtf_direction_filter_blocked"
     assert fake.order_send_called is False
 
 
@@ -392,6 +393,7 @@ def test_v51_mtf_filter_consente_sell_quando_short_bias(tmp_path, monkeypatch):
     assert result.mtf_filter_enabled is True
     assert result.mtf_filter_passed is True
     assert str(log.iloc[-1]["mtf_filter_passed"]).lower() == "true"
+    assert log.iloc[-1]["mtf_filter_reason"] == "mtf_direction_filter_passed"
     assert fake.order_send_called is False
 
 
@@ -410,7 +412,7 @@ def test_v51_mtf_filter_blocca_sell_quando_long_bias(tmp_path, monkeypatch):
     )
 
     assert result.status == "NO_TRADE"
-    assert "mtf_direction_filter_blocked" in result.reason
+    assert result.reason == "mtf_direction_filter_blocked"
     assert result.mtf_final_bias == "LONG_BIAS"
     assert fake.order_send_called is False
 
@@ -430,7 +432,8 @@ def test_v51_mtf_filter_blocca_mixed_quando_abilitato(tmp_path, monkeypatch):
     )
 
     assert result.status == "NO_TRADE"
-    assert "final_bias=MIXED" in result.reason
+    assert result.reason == "mtf_final_bias_mixed"
+    assert result.mtf_final_bias == "MIXED"
     assert fake.order_send_called is False
 
 
@@ -451,6 +454,8 @@ def test_v51_mtf_filter_disabilitato_comportamento_invariato(tmp_path, monkeypat
     assert result.accepted is True
     assert result.mtf_filter_enabled is False
     assert result.mtf_filter_passed is True
+    log = pd.read_csv(tmp_path / "v51_demo_execution_log.csv")
+    assert str(log.iloc[-1]["mtf_filter_enabled"]).lower() == "false"
     assert fake.order_send_called is False
 
 
@@ -469,8 +474,62 @@ def test_v51_mtf_filter_blocca_m1_m5_stale_se_require_data_ok(tmp_path, monkeypa
     )
 
     assert result.status == "NO_TRADE"
-    assert "required M1/M5 context not OK" in result.reason
-    assert "M1=STALE" in result.reason
+    assert result.reason == "mtf_data_not_ok"
+    assert result.mtf_final_bias == "SHORT_BIAS"
+    assert fake.order_send_called is False
+
+
+def test_v51_mtf_audit_no_candidate_logga_bias_e_enabled(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="MIXED")
+    market_data = make_live_feature_candidates(latest_accepted=False)
+    monkeypatch.setattr(executor, "read_mt5_closed_rates", lambda mt5, config: market_data)
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    log = pd.read_csv(tmp_path / "v51_demo_execution_log.csv")
+    latest = log.iloc[-1]
+    assert result.status == "NO_TRADE"
+    assert result.mtf_final_bias == "MIXED"
+    assert result.mtf_filter_enabled is True
+    assert result.mtf_filter_passed is False
+    assert result.mtf_filter_reason == "no_v51_candidate_to_filter"
+    assert latest["mtf_final_bias"] == "MIXED"
+    assert str(latest["mtf_filter_enabled"]).lower() == "true"
+    assert str(latest["mtf_filter_passed"]).lower() == "false"
+    assert latest["mtf_filter_reason"] == "no_v51_candidate_to_filter"
+    assert fake.order_send_called is False
+
+
+def test_v51_mtf_audit_config_gate_logga_bias(tmp_path):
+    config_path = write_v51_config(tmp_path, allow_demo_execution=False, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="LONG_BIAS")
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    log = pd.read_csv(tmp_path / "v51_demo_execution_log.csv")
+    latest = log.iloc[-1]
+    assert result.status == "REJECTED"
+    assert result.mtf_final_bias == "LONG_BIAS"
+    assert result.mtf_filter_enabled is True
+    assert result.mtf_filter_reason == "no_v51_candidate_to_filter"
+    assert latest["mtf_final_bias"] == "LONG_BIAS"
+    assert str(latest["mtf_filter_enabled"]).lower() == "true"
+    assert latest["mtf_filter_reason"] == "no_v51_candidate_to_filter"
     assert fake.order_send_called is False
 
 
