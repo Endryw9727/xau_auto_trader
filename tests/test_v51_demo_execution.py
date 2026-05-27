@@ -117,15 +117,16 @@ def write_v51_config(tmp_path, **overrides):
 
 
 def make_candidate(**overrides):
+    side = overrides.get("side", "BUY")
     values = {
         "signal_id": "V51-202605231145-BUY",
         "candle_time": NOW - pd.Timedelta(minutes=15),
         "symbol": "XAUUSD-P",
-        "side": "BUY",
+        "side": side,
         "lot_size": 0.01,
         "entry_price": 2400.0,
-        "stop_loss": 2398.8,
-        "take_profit": 2401.5,
+        "stop_loss": 2398.8 if side == "BUY" else 2401.2,
+        "take_profit": 2401.5 if side == "BUY" else 2398.5,
         "risk_reward": 1.25,
         "score": 80.0,
         "score_gap": 20.0,
@@ -297,9 +298,28 @@ def test_v51_demo_executor_rifiuta_candidate_stale_prima_dello_slippage(tmp_path
     result = executor.run_v51_demo_execution_once(config_path=config_path, output_dir=tmp_path, mt5_module=fake, now=NOW)
 
     assert result.status == "NO_TRADE"
-    assert result.reason.startswith("candidate stale:")
-    assert "max_candidate_age_minutes=20" in result.reason
+    assert result.reason == "candidate_stale"
+    assert result.time_alignment_status == "candidate_stale"
     assert result.slippage_points is None
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_rifiuta_candidate_futuro(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path)
+    future_candidate = make_candidate(candle_time=NOW + pd.Timedelta(minutes=15), entry_price=2400.0)
+    force_selected_candidate(monkeypatch, future_candidate)
+    fake = FakeV51MT5()
+
+    result = executor.run_v51_demo_execution_once(config_path=config_path, output_dir=tmp_path, mt5_module=fake, now=NOW)
+
+    log = pd.read_csv(tmp_path / "v51_demo_execution_log.csv")
+    latest = log.iloc[-1]
+    assert result.status == "NO_TRADE"
+    assert result.reason == "candidate_time_in_future"
+    assert result.time_alignment_status == "candidate_time_in_future"
+    assert result.candidate_age_minutes < 0
+    assert latest["time_alignment_status"] == "candidate_time_in_future"
+    assert str(latest["now_utc"]).startswith("2026-05-23T12:00:00")
     assert fake.order_send_called is False
 
 
@@ -314,6 +334,96 @@ def test_v51_demo_executor_candidate_fresco_arriva_al_controllo_successivo(tmp_p
     assert result.status == "NO_TRADE"
     assert "slippage" in result.reason
     assert result.slippage_points == pytest.approx(300.0)
+    assert result.adverse_slippage_points == pytest.approx(300.0)
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_sell_adverse_slippage_rejected(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="SHORT_BIAS")
+    force_selected_candidate(monkeypatch, make_candidate(side="SELL", entry_price=2400.0))
+    fake = FakeV51MT5(bid=2399.50, ask=2399.60)
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    assert result.status == "NO_TRADE"
+    assert result.reason == "adverse_slippage_exceeded"
+    assert result.mtf_filter_reason == "mtf_direction_filter_passed"
+    assert result.adverse_slippage_points == pytest.approx(50.0)
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_buy_adverse_slippage_rejected(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="LONG_BIAS")
+    force_selected_candidate(monkeypatch, make_candidate(side="BUY", entry_price=2400.0))
+    fake = FakeV51MT5(bid=2400.49, ask=2400.50)
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    assert result.status == "NO_TRADE"
+    assert result.reason == "adverse_slippage_exceeded"
+    assert result.adverse_slippage_points == pytest.approx(50.0)
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_price_chase_distance_rejected(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="LONG_BIAS")
+    force_selected_candidate(monkeypatch, make_candidate(side="BUY", entry_price=2400.0))
+    fake = FakeV51MT5(bid=2398.90, ask=2399.00)
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    assert result.status == "NO_TRADE"
+    assert result.reason == "price_chase_distance_exceeded"
+    assert result.adverse_slippage_points == pytest.approx(0.0)
+    assert result.chase_distance_points == pytest.approx(100.0)
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_fresh_valid_mtf_price_accettato_dry_run(tmp_path, monkeypatch):
+    config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
+    mtf_path = write_mtf_summary(tmp_path, final_bias="LONG_BIAS")
+    force_selected_candidate(monkeypatch, make_candidate(side="BUY", entry_price=2400.0))
+    fake = FakeV51MT5(bid=2400.00, ask=2400.10)
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        mtf_context_summary_path=mtf_path,
+        now=NOW,
+    )
+
+    orders = pd.read_csv(tmp_path / "v51_demo_orders.csv")
+    latest_order = orders.iloc[-1]
+    assert result.status == "DRY_RUN"
+    assert result.accepted is True
+    assert result.live_entry_price == pytest.approx(2400.10)
+    assert result.adverse_slippage_points == pytest.approx(10.0)
+    assert result.chase_distance_points == pytest.approx(10.0)
+    assert result.mtf_filter_reason == "mtf_direction_filter_passed"
+    assert latest_order["entry_price"] == pytest.approx(2400.10)
+    assert latest_order["stop_loss"] < latest_order["entry_price"] < latest_order["take_profit"]
     assert fake.order_send_called is False
 
 
@@ -554,7 +664,7 @@ def test_v51_demo_executor_non_apre_ordini_se_freshness_required_e_candidate_vec
     )
 
     assert result.status == "NO_TRADE"
-    assert result.reason.startswith("candidate stale:")
+    assert result.reason == "candidate_stale"
     assert fake.order_send_called is False
 
 

@@ -6,8 +6,8 @@ It never enables real live trading and records V51-specific execution logs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -25,6 +25,7 @@ from src.strategy_lab.strategy_v51_demo_intraday import (
 DEFAULT_V51_DEMO_OUTPUT_DIR = Path("reports/demo_execution")
 DEFAULT_V51_MTF_CONTEXT_SUMMARY_PATH = Path("reports/diagnostics/v51_mtf_context_summary.csv")
 V51_DEMO_COMMENT = "V51_DEMO"
+FUTURE_CANDIDATE_TOLERANCE_MINUTES = 1.0
 
 V51_DEMO_ORDER_COLUMNS = [
     "timestamp",
@@ -62,17 +63,26 @@ V51_DEMO_LOG_COLUMNS = [
     "candle_time",
     "symbol",
     "side",
+    "now_utc",
+    "now_local",
     "candidate_age_minutes",
     "latest_closed_candle_time",
     "selected_candidate_time",
+    "candidate_time_basis",
+    "time_alignment_status",
     "live_candidate_window_minutes",
     "require_latest_closed_candle_candidate",
     "selection_reason",
     "current_bid",
     "current_ask",
     "expected_entry_price",
+    "live_entry_price",
     "slippage_points",
+    "adverse_slippage_points",
     "max_slippage_points",
+    "chase_distance_points",
+    "max_chase_points",
+    "point_size",
     "spread_points",
     "session",
     "score",
@@ -123,17 +133,26 @@ class V51DemoExecutionResult:
     mt5_retcode: int | None = None
     mt5_order: int | None = None
     mt5_deal: int | None = None
+    now_utc: pd.Timestamp | None = None
+    now_local: str | None = None
     candidate_age_minutes: float | None = None
     latest_closed_candle_time: pd.Timestamp | None = None
     selected_candidate_time: pd.Timestamp | None = None
+    candidate_time_basis: str | None = None
+    time_alignment_status: str | None = None
     live_candidate_window_minutes: int | None = None
     require_latest_closed_candle_candidate: bool | None = None
     selection_reason: str | None = None
     current_bid: float | None = None
     current_ask: float | None = None
     expected_entry_price: float | None = None
+    live_entry_price: float | None = None
     slippage_points: float | None = None
+    adverse_slippage_points: float | None = None
     max_slippage_points: float | None = None
+    chase_distance_points: float | None = None
+    max_chase_points: float | None = None
+    point_size: float | None = None
     spread_points: float | None = None
     session: str | None = None
     score: float | None = None
@@ -164,6 +183,18 @@ class MTFAuditContext:
     data_issues: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class LivePriceQuality:
+    """Current bid/ask quality check for a selected V51 candidate."""
+
+    live_entry_price: float | None
+    expected_entry_price: float
+    adverse_slippage_points: float | None
+    chase_distance_points: float | None
+    point_size: float | None
+    reason: str | None = None
+
+
 def run_v51_demo_execution_once(
     *,
     config_path: str | Path = DEFAULT_V51_CONFIG_PATH,
@@ -177,14 +208,10 @@ def run_v51_demo_execution_once(
     config = load_v51_config(config_path)
     now = _utc_now(now)
     mtf_audit = load_mtf_audit_context(config, mtf_context_summary_path)
-    no_candidate_mtf_telemetry = _mtf_audit_telemetry(
-        mtf_audit,
-        passed=False if mtf_audit.enabled else True,
-        reason="no_v51_candidate_to_filter" if mtf_audit.enabled else "mtf_filter_disabled",
-    )
+    no_candidate_telemetry = _no_candidate_telemetry(now, mtf_audit)
     gate_error = _validate_execution_gates(config)
     if gate_error is not None:
-        result = _result(False, "REJECTED", gate_error, dry_run=dry_run, telemetry=no_candidate_mtf_telemetry)
+        result = _result(False, "REJECTED", gate_error, dry_run=dry_run, telemetry=no_candidate_telemetry)
         append_v51_demo_log(output_dir, result, event="config_gate")
         return result
 
@@ -195,7 +222,7 @@ def run_v51_demo_execution_once(
             "MT5_NOT_AVAILABLE",
             "Python MetaTrader5 package is not available.",
             dry_run=dry_run,
-            telemetry=no_candidate_mtf_telemetry,
+            telemetry=no_candidate_telemetry,
         )
         append_v51_demo_log(output_dir, result, event="mt5_unavailable")
         return result
@@ -209,14 +236,14 @@ def run_v51_demo_execution_once(
                 "ERROR",
                 f"MT5_NOT_INITIALIZED: {_last_error(mt5)}",
                 dry_run=dry_run,
-                telemetry=no_candidate_mtf_telemetry,
+                telemetry=no_candidate_telemetry,
             )
             append_v51_demo_log(output_dir, result, event="mt5_initialize")
             return result
 
         market_error = _validate_mt5_demo_state(mt5, config)
         if market_error is not None:
-            result = _result(False, "REJECTED", market_error, dry_run=dry_run, telemetry=no_candidate_mtf_telemetry)
+            result = _result(False, "REJECTED", market_error, dry_run=dry_run, telemetry=no_candidate_telemetry)
             append_v51_demo_log(output_dir, result, event="broker_gate")
             return result
 
@@ -228,17 +255,18 @@ def run_v51_demo_execution_once(
                 "NO_TRADE",
                 f"MT5 data unavailable: {exc}",
                 dry_run=dry_run,
-                telemetry=no_candidate_mtf_telemetry,
+                telemetry=no_candidate_telemetry,
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
+        latest_closed_candle_time = _latest_closed_candle_time(rates)
+        no_candidate_telemetry = _no_candidate_telemetry(now, mtf_audit, latest_closed_candle_time=latest_closed_candle_time)
         stale_reason = _stale_data_reason(rates, config, now)
         if stale_reason is not None:
-            result = _result(False, "NO_TRADE", stale_reason, dry_run=dry_run, telemetry=no_candidate_mtf_telemetry)
+            result = _result(False, "NO_TRADE", stale_reason, dry_run=dry_run, telemetry=no_candidate_telemetry)
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
-        latest_closed_candle_time = _latest_closed_candle_time(rates)
         order_log = load_v51_demo_orders(output_dir)
         execution_log = load_v51_demo_execution_log(output_dir)
         trading_day = latest_closed_candle_time.normalize()
@@ -249,7 +277,7 @@ def run_v51_demo_execution_once(
                 "NO_TRADE",
                 f"max trades per day reached ({config.max_trades_per_day})",
                 dry_run=dry_run,
-                telemetry=no_candidate_mtf_telemetry,
+                telemetry=no_candidate_telemetry,
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
@@ -260,7 +288,7 @@ def run_v51_demo_execution_once(
                 "NO_TRADE",
                 "existing open V51_DEMO position blocks new demo order",
                 dry_run=dry_run,
-                telemetry=no_candidate_mtf_telemetry,
+                telemetry=no_candidate_telemetry,
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
@@ -276,7 +304,7 @@ def run_v51_demo_execution_once(
                 dry_run=dry_run,
                 telemetry={
                     **_market_telemetry(config, tick, spread_points=spread_points),
-                    **no_candidate_mtf_telemetry,
+                    **no_candidate_telemetry,
                 },
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
@@ -303,8 +331,13 @@ def run_v51_demo_execution_once(
                     tick=tick,
                     spread_points=spread_points,
                     selection_reason=no_trade_reason,
+                    now=now,
                 )
-                | no_candidate_mtf_telemetry,
+                | _mtf_audit_telemetry(
+                    mtf_audit,
+                    passed=False if mtf_audit.enabled else True,
+                    reason="no_v51_candidate_to_filter" if mtf_audit.enabled else "mtf_filter_disabled",
+                ),
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
@@ -319,6 +352,7 @@ def run_v51_demo_execution_once(
             spread_points=spread_points,
             slippage_points=None,
             selection_reason=selection_reason,
+            now=now,
         )
         if candidate_error is not None:
             telemetry = {
@@ -331,6 +365,26 @@ def run_v51_demo_execution_once(
             }
             result = _result(False, "REJECTED", candidate_error, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
             append_v51_demo_log(output_dir, result, event="candidate_gate")
+            return result
+
+        time_guard_reason = _candidate_time_guard_reason(candidate, config, latest_closed_candle_time, now)
+        if time_guard_reason is not None:
+            telemetry = {
+                **telemetry,
+                **_time_alignment_telemetry(
+                    now,
+                    latest_closed_candle_time=latest_closed_candle_time,
+                    candidate=candidate,
+                    status=time_guard_reason,
+                ),
+                **_mtf_audit_telemetry(
+                    mtf_audit,
+                    passed=False if mtf_audit.enabled else True,
+                    reason="candidate_failed_before_mtf_filter" if mtf_audit.enabled else "mtf_filter_disabled",
+                ),
+            }
+            result = _result(False, "NO_TRADE", time_guard_reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
+            append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
         mtf_filter = evaluate_mtf_direction_filter(candidate, config, mtf_context_summary_path, audit=mtf_audit)
@@ -348,32 +402,75 @@ def run_v51_demo_execution_once(
 
         stale_candidate_reason = _candidate_stale_reason(candidate, config, latest_closed_candle_time)
         if stale_candidate_reason is not None:
+            telemetry = {
+                **telemetry,
+                **_time_alignment_telemetry(
+                    now,
+                    latest_closed_candle_time=latest_closed_candle_time,
+                    candidate=candidate,
+                    status=stale_candidate_reason,
+                ),
+            }
             result = _result(False, "NO_TRADE", stale_candidate_reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
 
-        slippage = _slippage_points(candidate.side, candidate.entry_price, symbol_info, tick)
+        price_check = _live_price_quality(candidate, config, symbol_info, tick)
         telemetry = _candidate_telemetry(
             candidate,
             config,
             latest_closed_candle_time=latest_closed_candle_time,
             tick=tick,
             spread_points=spread_points,
-            slippage_points=slippage,
+            slippage_points=price_check.adverse_slippage_points,
             selection_reason=selection_reason,
+            now=now,
         )
+        telemetry.update(_price_quality_telemetry(price_check))
         telemetry = _with_mtf_telemetry(telemetry, mtf_filter)
-        if slippage is not None and slippage > config.max_slippage_points:
+        if price_check.reason is not None:
             result = _result(
                 False,
                 "NO_TRADE",
-                f"slippage {slippage:.1f} points exceeds max {config.max_slippage_points:.1f}",
+                price_check.reason,
                 dry_run=dry_run,
                 candidate=candidate,
                 telemetry=telemetry,
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
+
+        if config.reprice_live_entry:
+            repriced_candidate, reprice_error = _reprice_candidate_from_live_entry(candidate, price_check.live_entry_price)
+            if reprice_error is not None:
+                result = _result(False, "NO_TRADE", reprice_error, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
+                append_v51_demo_log(output_dir, result, event="no_trade")
+                return result
+            candidate = repriced_candidate
+            reprice_validation = validate_v51_demo_candidate(candidate, config, order_log)
+            telemetry = _candidate_telemetry(
+                candidate,
+                config,
+                latest_closed_candle_time=latest_closed_candle_time,
+                tick=tick,
+                spread_points=spread_points,
+                slippage_points=price_check.adverse_slippage_points,
+                selection_reason=selection_reason,
+                now=now,
+            )
+            telemetry.update(_price_quality_telemetry(price_check))
+            telemetry = _with_mtf_telemetry(telemetry, mtf_filter)
+            if reprice_validation is not None:
+                result = _result(
+                    False,
+                    "NO_TRADE",
+                    f"repriced_candidate_invalid: {reprice_validation}",
+                    dry_run=dry_run,
+                    candidate=candidate,
+                    telemetry=telemetry,
+                )
+                append_v51_demo_log(output_dir, result, event="no_trade")
+                return result
 
         if dry_run:
             result = _result(
@@ -581,6 +678,10 @@ def validate_v51_demo_candidate(
         return "allow_real_live=true blocks V51 demo execution"
     if candidate.stop_loss is None or candidate.take_profit is None:
         return "SL and TP are required for V51 demo execution"
+    if candidate.side == "BUY" and not (candidate.stop_loss < candidate.entry_price < candidate.take_profit):
+        return "invalid BUY SL/TP geometry"
+    if candidate.side == "SELL" and not (candidate.take_profit < candidate.entry_price < candidate.stop_loss):
+        return "invalid SELL SL/TP geometry"
     if candidate.risk_reward is None or candidate.risk_reward < config.min_risk_reward:
         value = 0.0 if candidate.risk_reward is None else candidate.risk_reward
         return f"RR {value:.2f} below {config.min_risk_reward:.2f}"
@@ -697,19 +798,28 @@ def append_v51_demo_log(
         "candle_time": result.candle_time.isoformat() if result.candle_time is not None else None,
         "symbol": result.symbol,
         "side": result.side,
+        "now_utc": result.now_utc.isoformat() if result.now_utc is not None else None,
+        "now_local": result.now_local,
         "candidate_age_minutes": result.candidate_age_minutes,
         "latest_closed_candle_time": result.latest_closed_candle_time.isoformat()
         if result.latest_closed_candle_time is not None
         else None,
         "selected_candidate_time": result.selected_candidate_time.isoformat() if result.selected_candidate_time is not None else None,
+        "candidate_time_basis": result.candidate_time_basis,
+        "time_alignment_status": result.time_alignment_status,
         "live_candidate_window_minutes": result.live_candidate_window_minutes,
         "require_latest_closed_candle_candidate": result.require_latest_closed_candle_candidate,
         "selection_reason": result.selection_reason,
         "current_bid": result.current_bid,
         "current_ask": result.current_ask,
         "expected_entry_price": result.expected_entry_price,
+        "live_entry_price": result.live_entry_price,
         "slippage_points": result.slippage_points,
+        "adverse_slippage_points": result.adverse_slippage_points,
         "max_slippage_points": result.max_slippage_points,
+        "chase_distance_points": result.chase_distance_points,
+        "max_chase_points": result.max_chase_points,
+        "point_size": result.point_size,
         "spread_points": result.spread_points,
         "session": result.session,
         "score": result.score,
@@ -946,17 +1056,26 @@ def _result(
         candle_time=candidate.candle_time if candidate is not None else candle_time,
         symbol=candidate.symbol if candidate is not None else symbol,
         side=candidate.side if candidate is not None else side,
+        now_utc=telemetry.get("now_utc"),
+        now_local=telemetry.get("now_local"),
         candidate_age_minutes=telemetry.get("candidate_age_minutes"),
         latest_closed_candle_time=telemetry.get("latest_closed_candle_time"),
         selected_candidate_time=telemetry.get("selected_candidate_time"),
+        candidate_time_basis=telemetry.get("candidate_time_basis"),
+        time_alignment_status=telemetry.get("time_alignment_status"),
         live_candidate_window_minutes=telemetry.get("live_candidate_window_minutes"),
         require_latest_closed_candle_candidate=telemetry.get("require_latest_closed_candle_candidate"),
         selection_reason=telemetry.get("selection_reason"),
         current_bid=telemetry.get("current_bid"),
         current_ask=telemetry.get("current_ask"),
         expected_entry_price=telemetry.get("expected_entry_price"),
+        live_entry_price=telemetry.get("live_entry_price"),
         slippage_points=telemetry.get("slippage_points"),
+        adverse_slippage_points=telemetry.get("adverse_slippage_points"),
         max_slippage_points=telemetry.get("max_slippage_points"),
+        chase_distance_points=telemetry.get("chase_distance_points"),
+        max_chase_points=telemetry.get("max_chase_points"),
+        point_size=telemetry.get("point_size"),
         spread_points=telemetry.get("spread_points"),
         session=telemetry.get("session") if telemetry.get("session") is not None else (candidate.session if candidate is not None else None),
         score=telemetry.get("score"),
@@ -983,6 +1102,7 @@ def _market_telemetry(
         "current_bid": _float_or_none(getattr(tick, "bid", None)) if tick is not None else None,
         "current_ask": _float_or_none(getattr(tick, "ask", None)) if tick is not None else None,
         "max_slippage_points": float(config.max_slippage_points),
+        "max_chase_points": float(config.max_chase_points),
         "spread_points": spread_points,
     }
 
@@ -994,10 +1114,17 @@ def _selection_telemetry(
     tick: Any,
     spread_points: float | None,
     selection_reason: str,
+    now: pd.Timestamp | None = None,
 ) -> dict[str, Any]:
     telemetry = _market_telemetry(config, tick, spread_points=spread_points)
     telemetry.update(
         {
+            **_time_alignment_telemetry(
+                _utc_now(now),
+                latest_closed_candle_time=latest_closed_candle_time,
+                candidate=None,
+                status="no_v51_candidate_to_filter",
+            ),
             "latest_closed_candle_time": latest_closed_candle_time,
             "live_candidate_window_minutes": config.live_candidate_window_minutes,
             "require_latest_closed_candle_candidate": config.require_latest_closed_candle_candidate,
@@ -1016,6 +1143,7 @@ def _candidate_telemetry(
     spread_points: float | None,
     slippage_points: float | None,
     selection_reason: str,
+    now: pd.Timestamp | None = None,
 ) -> dict[str, Any]:
     telemetry = _selection_telemetry(
         config,
@@ -1023,9 +1151,16 @@ def _candidate_telemetry(
         tick=tick,
         spread_points=spread_points,
         selection_reason=selection_reason,
+        now=now,
     )
     telemetry.update(
         {
+            **_time_alignment_telemetry(
+                _utc_now(now),
+                latest_closed_candle_time=latest_closed_candle_time,
+                candidate=candidate,
+                status="OK",
+            ),
             "candidate_age_minutes": _candidate_age_minutes(candidate, latest_closed_candle_time),
             "selected_candidate_time": _utc_timestamp(candidate.candle_time),
             "expected_entry_price": candidate.entry_price,
@@ -1044,6 +1179,73 @@ def _candidate_age_minutes(candidate: V51DemoCandidate, latest_closed_candle_tim
     return (latest_time - candidate_time).total_seconds() / 60.0
 
 
+def _time_alignment_telemetry(
+    now: pd.Timestamp,
+    *,
+    latest_closed_candle_time: pd.Timestamp | None,
+    candidate: V51DemoCandidate | None,
+    status: str,
+) -> dict[str, Any]:
+    latest_time = _utc_timestamp(latest_closed_candle_time) if latest_closed_candle_time is not None else None
+    candidate_time = _utc_timestamp(candidate.candle_time) if candidate is not None else None
+    age = None
+    if latest_time is not None and candidate_time is not None:
+        age = (latest_time - candidate_time).total_seconds() / 60.0
+    return {
+        "now_utc": _utc_now(now),
+        "now_local": _local_time_string(now),
+        "latest_closed_candle_time": latest_time,
+        "selected_candidate_time": candidate_time,
+        "candidate_age_minutes": age,
+        "candidate_time_basis": "mt5_closed_candle_utc",
+        "time_alignment_status": status,
+    }
+
+
+def _no_candidate_telemetry(
+    now: pd.Timestamp,
+    mtf_audit: MTFAuditContext,
+    *,
+    latest_closed_candle_time: pd.Timestamp | None = None,
+) -> dict[str, Any]:
+    return {
+        **_time_alignment_telemetry(
+            now,
+            latest_closed_candle_time=latest_closed_candle_time,
+            candidate=None,
+            status="no_v51_candidate_to_filter",
+        ),
+        **_mtf_audit_telemetry(
+            mtf_audit,
+            passed=False if mtf_audit.enabled else True,
+            reason="no_v51_candidate_to_filter" if mtf_audit.enabled else "mtf_filter_disabled",
+        ),
+    }
+
+
+def _local_time_string(now: pd.Timestamp) -> str:
+    value = _utc_now(now)
+    local_tz = datetime.now().astimezone().tzinfo
+    return value.tz_convert(local_tz).isoformat()
+
+
+def _candidate_time_guard_reason(
+    candidate: V51DemoCandidate,
+    config: V51DemoIntradayConfig,
+    latest_closed_candle_time: pd.Timestamp,
+    now: pd.Timestamp,
+) -> str | None:
+    age_minutes = _candidate_age_minutes(candidate, latest_closed_candle_time)
+    now_delta_minutes = (_utc_timestamp(candidate.candle_time) - _utc_now(now)).total_seconds() / 60.0
+    if now_delta_minutes > FUTURE_CANDIDATE_TOLERANCE_MINUTES:
+        return "candidate_time_in_future"
+    if age_minutes < -FUTURE_CANDIDATE_TOLERANCE_MINUTES:
+        return "candidate_time_in_future"
+    if age_minutes > float(config.live_candidate_window_minutes):
+        return "candidate_stale"
+    return None
+
+
 def _candidate_stale_reason(
     candidate: V51DemoCandidate,
     config: V51DemoIntradayConfig,
@@ -1056,12 +1258,7 @@ def _candidate_stale_reason(
         return None
     if 0 <= age_minutes <= config.max_candidate_age_minutes:
         return None
-    return (
-        "candidate stale: "
-        f"candle_time={_utc_timestamp(candidate.candle_time).isoformat()}, "
-        f"age_minutes={age_minutes:.1f}, "
-        f"max_candidate_age_minutes={config.max_candidate_age_minutes}"
-    )
+    return "candidate_stale"
 
 
 def _filter_live_candidate_window(
@@ -1111,7 +1308,10 @@ def _rejected_signal_cooldown_reason(
         return None
     reasons = same_signal.get("reason", pd.Series([""] * len(same_signal), index=same_signal.index)).astype(str).str.lower()
     statuses = same_signal.get("status", pd.Series([""] * len(same_signal), index=same_signal.index)).astype(str).str.upper()
-    retry_rejections = reasons.str.contains("slippage|candidate stale|duplicate rejected signal cooldown", regex=True)
+    retry_rejections = reasons.str.contains(
+        "slippage|candidate_stale|candidate_time_in_future|price_chase_distance_exceeded|duplicate rejected signal cooldown",
+        regex=True,
+    )
     rejected_rows = same_signal[statuses.isin({"NO_TRADE", "REJECTED"}) & retry_rejections].copy()
     if rejected_rows.empty:
         return None
@@ -1237,6 +1437,74 @@ def _slippage_points(side: str, expected_price: float, symbol: Any, tick: Any) -
     if current is None:
         return None
     return abs(current - expected_price) / point
+
+
+def _live_price_quality(
+    candidate: V51DemoCandidate,
+    config: V51DemoIntradayConfig,
+    symbol: Any,
+    tick: Any,
+) -> LivePriceQuality:
+    point = _float_or_none(getattr(symbol, "point", None)) or 0.0
+    if tick is None or point <= 0:
+        return LivePriceQuality(None, candidate.entry_price, None, None, point or None, "live_price_unavailable")
+    live_entry = _float_or_none(getattr(tick, "ask" if candidate.side == "BUY" else "bid", None))
+    if live_entry is None:
+        return LivePriceQuality(None, candidate.entry_price, None, None, point, "live_price_unavailable")
+    if candidate.side == "BUY":
+        adverse = max(0.0, live_entry - candidate.entry_price) / point
+    else:
+        adverse = max(0.0, candidate.entry_price - live_entry) / point
+    chase = abs(live_entry - candidate.entry_price) / point
+    if adverse > float(config.max_slippage_points):
+        return LivePriceQuality(live_entry, candidate.entry_price, adverse, chase, point, "adverse_slippage_exceeded")
+    if chase > float(config.max_chase_points):
+        return LivePriceQuality(live_entry, candidate.entry_price, adverse, chase, point, "price_chase_distance_exceeded")
+    return LivePriceQuality(live_entry, candidate.entry_price, adverse, chase, point)
+
+
+def _price_quality_telemetry(price_check: LivePriceQuality) -> dict[str, Any]:
+    return {
+        "expected_entry_price": price_check.expected_entry_price,
+        "live_entry_price": price_check.live_entry_price,
+        "slippage_points": price_check.adverse_slippage_points,
+        "adverse_slippage_points": price_check.adverse_slippage_points,
+        "chase_distance_points": price_check.chase_distance_points,
+        "point_size": price_check.point_size,
+    }
+
+
+def _reprice_candidate_from_live_entry(
+    candidate: V51DemoCandidate,
+    live_entry_price: float | None,
+) -> tuple[V51DemoCandidate, str | None]:
+    if live_entry_price is None:
+        return candidate, "live_price_unavailable"
+    if candidate.stop_loss is None or candidate.take_profit is None:
+        return candidate, "repriced_candidate_invalid: SL and TP are required"
+    if candidate.side == "BUY":
+        risk_distance = candidate.entry_price - candidate.stop_loss
+        reward_distance = candidate.take_profit - candidate.entry_price
+        stop_loss = live_entry_price - risk_distance
+        take_profit = live_entry_price + reward_distance
+    else:
+        risk_distance = candidate.stop_loss - candidate.entry_price
+        reward_distance = candidate.entry_price - candidate.take_profit
+        stop_loss = live_entry_price + risk_distance
+        take_profit = live_entry_price - reward_distance
+    if risk_distance <= 0 or reward_distance <= 0:
+        return candidate, "repriced_candidate_invalid: invalid original SL/TP geometry"
+    risk_reward = reward_distance / risk_distance
+    return (
+        replace(
+            candidate,
+            entry_price=float(live_entry_price),
+            stop_loss=float(stop_loss),
+            take_profit=float(take_profit),
+            risk_reward=float(risk_reward),
+        ),
+        None,
+    )
 
 
 def _success_retcode_values(mt5: Any) -> set[int]:

@@ -31,6 +31,8 @@ max_spread_cost: 0.5
 max_slippage_estimate: 0.5
 max_spread_points: 80
 max_slippage_points: 20
+max_chase_points: 80
+reprice_live_entry: true
 max_data_age_minutes: 45
 max_candidate_age_minutes: 20
 candidate_freshness_required: true

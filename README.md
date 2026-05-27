@@ -118,6 +118,18 @@ Output:
 Lo script resta demo-only: non abilita live reale e `allow_real_live` deve
 restare `false`.
 
+Il layer di esecuzione V51 normalizza i tempi a UTC prima dei gate live-safe e
+scrive nel log `now_utc`, `now_local`, `candidate_time_basis` e
+`time_alignment_status`. Un candidato con timestamp futuro viene rifiutato con
+`candidate_time_in_future`; un candidato fuori da `live_candidate_window_minutes`
+viene rifiutato con `candidate_stale`.
+
+Prima di inviare un ordine demo, il runner confronta il prezzo atteso con
+bid/ask correnti: protegge da slippage avverso con `max_slippage_points`, blocca
+inseguimenti eccessivi con `max_chase_points` e, se `reprice_live_entry=true`,
+usa il prezzo live per ricalcolare SL, TP e RR. Nessun ordine viene inviato se il
+RR ricalcolato scende sotto `min_risk_reward` o se SL/TP non sono coerenti.
+
 ## V51 MTF Context Report
 
 Il report MTF V51 legge solo CSV locali e produce contesto operativo
@@ -158,6 +170,8 @@ Config opzionale in `config/strategy_v51.yaml`:
     require_mtf_data_ok: true
     allowed_mtf_bias_for_buy: LONG_BIAS
     allowed_mtf_bias_for_sell: SHORT_BIAS
+    max_chase_points: 80
+    reprice_live_entry: true
 
 Quando `use_mtf_context_filter` e `true`, un BUY passa solo con
 `LONG_BIAS` e un SELL passa solo con `SHORT_BIAS`. `MIXED`,

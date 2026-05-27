@@ -89,6 +89,8 @@ class V51DemoIntradayConfig:
     max_slippage_estimate: float
     max_spread_points: float
     max_slippage_points: int
+    max_chase_points: float
+    reprice_live_entry: bool
     max_data_age_minutes: int
     max_candidate_age_minutes: int
     candidate_freshness_required: bool
@@ -153,6 +155,8 @@ def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntrad
         max_slippage_estimate=float(raw.get("max_slippage_estimate", 0.5)),
         max_spread_points=float(raw.get("max_spread_points", 80)),
         max_slippage_points=int(raw.get("max_slippage_points", 20)),
+        max_chase_points=float(raw.get("max_chase_points", 80)),
+        reprice_live_entry=_as_bool(raw.get("reprice_live_entry", True)),
         max_data_age_minutes=int(raw.get("max_data_age_minutes", 45)),
         max_candidate_age_minutes=int(raw.get("max_candidate_age_minutes", 20)),
         candidate_freshness_required=_as_bool(raw.get("candidate_freshness_required", True)),
@@ -197,6 +201,8 @@ def validate_v51_config(config: V51DemoIntradayConfig) -> None:
         raise ValueError("cost estimates cannot be negative")
     if config.max_spread_points <= 0 or config.max_slippage_points < 0:
         raise ValueError("MT5 spread/slippage limits must be valid")
+    if config.max_chase_points < 0:
+        raise ValueError("max_chase_points must be non-negative")
     if config.max_data_age_minutes <= 0 or config.selection_lookback_candles <= 0:
         raise ValueError("data freshness and selection lookback must be positive")
     if config.max_candidate_age_minutes <= 0:
