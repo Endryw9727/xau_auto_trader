@@ -45,3 +45,8 @@ use_mtf_context_filter: false
 require_mtf_data_ok: true
 allowed_mtf_bias_for_buy: LONG_BIAS
 allowed_mtf_bias_for_sell: SHORT_BIAS
+
+use_ai_reasoning_filter: false
+ai_reasoning_report_only: true
+min_ai_confidence_to_trade: 70
+min_trade_quality_score: 70

@@ -6,4 +6,5 @@ paper-forward setup should be supported, blocked, or watched.
 
 It must not open trades, close trades, send broker requests, bypass risk
 checks, enable live trading, or promote a strategy automatically. AI output is
-advisory only. `ai_can_execute` must remain false.
+advisory/report-only by default and may only be used as an explicit safety
+veto. `ai_can_execute` must remain false.

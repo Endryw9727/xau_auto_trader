@@ -102,6 +102,10 @@ class V51DemoIntradayConfig:
     require_mtf_data_ok: bool
     allowed_mtf_bias_for_buy: tuple[str, ...]
     allowed_mtf_bias_for_sell: tuple[str, ...]
+    use_ai_reasoning_filter: bool
+    ai_reasoning_report_only: bool
+    min_ai_confidence_to_trade: float
+    min_trade_quality_score: float
 
     @property
     def strategy_config(self) -> StrategyConfig:
@@ -168,6 +172,10 @@ def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntrad
         require_mtf_data_ok=_as_bool(raw.get("require_mtf_data_ok", True)),
         allowed_mtf_bias_for_buy=_as_tuple(raw.get("allowed_mtf_bias_for_buy", "LONG_BIAS")),
         allowed_mtf_bias_for_sell=_as_tuple(raw.get("allowed_mtf_bias_for_sell", "SHORT_BIAS")),
+        use_ai_reasoning_filter=_as_bool(raw.get("use_ai_reasoning_filter", False)),
+        ai_reasoning_report_only=_as_bool(raw.get("ai_reasoning_report_only", True)),
+        min_ai_confidence_to_trade=float(raw.get("min_ai_confidence_to_trade", 70)),
+        min_trade_quality_score=float(raw.get("min_trade_quality_score", 70)),
     )
     validate_v51_config(config)
     return config
@@ -213,6 +221,10 @@ def validate_v51_config(config: V51DemoIntradayConfig) -> None:
         raise ValueError("live_candidate_window_minutes must be positive")
     if not config.allowed_mtf_bias_for_buy or not config.allowed_mtf_bias_for_sell:
         raise ValueError("allowed MTF bias lists cannot be empty")
+    if not 0 <= config.min_ai_confidence_to_trade <= 100:
+        raise ValueError("min_ai_confidence_to_trade must be between 0 and 100")
+    if not 0 <= config.min_trade_quality_score <= 100:
+        raise ValueError("min_trade_quality_score must be between 0 and 100")
 
 
 def generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> TradingSignal:

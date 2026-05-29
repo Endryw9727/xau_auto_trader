@@ -6,6 +6,7 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pandas as pd
@@ -13,6 +14,15 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.ai_reasoning.v51_reasoning_engine import (
+    CandidateContext,
+    MacroContext,
+    NewsRiskContext,
+    ReasoningDecision,
+    ReasoningInput,
+    evaluate_v51_reasoning,
+    timeframe_contexts_from_records,
+)
 from src.execution.v51_demo_executor import DEFAULT_V51_DEMO_OUTPUT_DIR, run_v51_demo_execution_once
 from src.market_data.data_freshness import DEFAULT_XAUUSD_CSV_PATH, analyze_data_freshness, format_freshness_detail
 from src.market_data.mt5_csv_bridge import import_mt5_csv_bridge
@@ -40,6 +50,16 @@ V51_DECISION_AUDIT_COLUMNS = [
     "mtf_filter_enabled",
     "mtf_filter_passed",
     "mtf_filter_reason",
+    "ai_reasoning_enabled",
+    "ai_reasoning_report_only",
+    "ai_final_bias",
+    "ai_confidence_score",
+    "ai_trade_quality_score",
+    "ai_allow_trade",
+    "ai_veto_reasons",
+    "ai_positive_factors",
+    "ai_negative_factors",
+    "ai_explanation",
     "v51_called",
     "v51_status",
     "v51_accepted",
@@ -117,6 +137,7 @@ def run_v51_live_safe_cycle(
             mtf_context=None,
             cycle_result=result,
             execution=None,
+            ai_decision=None,
             dry_run=not execute_demo,
         )
         append_cycle_log(log_path, lines)
@@ -144,6 +165,7 @@ def run_v51_live_safe_cycle(
             mtf_context=None,
             cycle_result=result,
             execution=None,
+            ai_decision=None,
             dry_run=not execute_demo,
         )
         append_cycle_log(log_path, lines)
@@ -179,6 +201,7 @@ def run_v51_live_safe_cycle(
         lines.append(f"DATA_STALE {freshness_detail}")
         lines.append("V51 demo execution skipped because local data is not fresh.")
         lines.append("No real live execution is enabled.")
+        ai_decision = build_ai_reasoning_decision(config, mtf_context, freshness, execution=None)
         write_decision_audit(
             output_dir,
             mode=_cycle_mode(execute_demo),
@@ -187,17 +210,22 @@ def run_v51_live_safe_cycle(
             mtf_context=mtf_context,
             cycle_result=result,
             execution=None,
+            ai_decision=ai_decision,
             dry_run=not execute_demo,
         )
         append_cycle_log(log_path, lines)
         return result
 
-    execution = execution_fn(
+    execution, ai_decision = run_execution_with_ai_reasoning(
+        execution_fn,
+        config=config,
         config_path=config_path,
         output_dir=output_dir,
         mtf_context_summary_path=getattr(mtf_context, "summary_path", None),
-        dry_run=not execute_demo,
-        **({"now": now} if now is not None else {}),
+        mtf_context=mtf_context,
+        freshness=freshness,
+        execute_demo=execute_demo,
+        now=now,
     )
     result = V51LiveSafeCycleResult(
         status="V51_EXECUTED",
@@ -225,7 +253,8 @@ def run_v51_live_safe_cycle(
         mtf_context=mtf_context,
         cycle_result=result,
         execution=execution,
-        dry_run=not execute_demo,
+        ai_decision=ai_decision,
+        dry_run=bool(getattr(execution, "dry_run", not execute_demo)),
     )
     append_cycle_log(log_path, lines)
     return result
@@ -240,6 +269,7 @@ def write_decision_audit(
     mtf_context: Any | None,
     cycle_result: V51LiveSafeCycleResult,
     execution: Any | None,
+    ai_decision: ReasoningDecision | None,
     dry_run: bool,
 ) -> tuple[Path, Path]:
     """Append one cycle audit row and refresh the human-readable latest file."""
@@ -254,6 +284,7 @@ def write_decision_audit(
         mtf_context=mtf_context,
         cycle_result=cycle_result,
         execution=execution,
+        ai_decision=ai_decision,
         dry_run=dry_run,
     )
     _append_csv(csv_path, row, V51_DECISION_AUDIT_COLUMNS)
@@ -264,6 +295,7 @@ def write_decision_audit(
             mtf_context=mtf_context,
             cycle_result=cycle_result,
             execution=execution,
+            ai_decision=ai_decision,
         ),
         encoding="utf-8",
     )
@@ -278,6 +310,7 @@ def build_decision_audit_row(
     mtf_context: Any | None,
     cycle_result: V51LiveSafeCycleResult,
     execution: Any | None,
+    ai_decision: ReasoningDecision | None,
     dry_run: bool,
 ) -> dict[str, Any]:
     """Build one flat V51 cycle audit row from existing read-only telemetry."""
@@ -313,6 +346,16 @@ def build_decision_audit_row(
         "mtf_filter_enabled": mtf_filter_enabled,
         "mtf_filter_passed": mtf_filter_passed,
         "mtf_filter_reason": mtf_filter_reason,
+        "ai_reasoning_enabled": getattr(config, "use_ai_reasoning_filter", None),
+        "ai_reasoning_report_only": getattr(config, "ai_reasoning_report_only", None),
+        "ai_final_bias": getattr(ai_decision, "final_bias", None),
+        "ai_confidence_score": _float_or_none(getattr(ai_decision, "confidence_score", None)),
+        "ai_trade_quality_score": _float_or_none(getattr(ai_decision, "trade_quality_score", None)),
+        "ai_allow_trade": getattr(ai_decision, "allow_trade", None),
+        "ai_veto_reasons": _join_reasoning_list(getattr(ai_decision, "veto_reasons", None)),
+        "ai_positive_factors": _join_reasoning_list(getattr(ai_decision, "positive_factors", None)),
+        "ai_negative_factors": _join_reasoning_list(getattr(ai_decision, "negative_factors", None)),
+        "ai_explanation": getattr(ai_decision, "explanation", None),
         "v51_called": cycle_result.v51_called,
         "v51_status": cycle_result.v51_status,
         "v51_accepted": cycle_result.v51_accepted,
@@ -340,6 +383,7 @@ def build_decision_audit_latest_text(
     mtf_context: Any | None,
     cycle_result: V51LiveSafeCycleResult,
     execution: Any | None,
+    ai_decision: ReasoningDecision | None,
 ) -> str:
     """Build a concise latest-cycle audit summary for operators."""
     lines = [
@@ -364,6 +408,18 @@ def build_decision_audit_latest_text(
         lines.append("- timeframe bias: unavailable")
     lines.extend(
         [
+            "",
+            "AI reasoning",
+            f"- enabled: {_display(row['ai_reasoning_enabled'])}",
+            f"- report_only: {_display(row['ai_reasoning_report_only'])}",
+            f"- final_bias: {row['ai_final_bias'] or 'n/a'}",
+            f"- confidence_score: {_display(row['ai_confidence_score'])}",
+            f"- trade_quality_score: {_display(row['ai_trade_quality_score'])}",
+            f"- allow_trade: {_display(row['ai_allow_trade'])}",
+            f"- veto_reasons: {row['ai_veto_reasons'] or 'n/a'}",
+            f"- positive_factors: {row['ai_positive_factors'] or 'n/a'}",
+            f"- negative_factors: {row['ai_negative_factors'] or 'n/a'}",
+            f"- explanation: {row['ai_explanation'] or 'n/a'}",
             "",
             "Candidate status",
             f"- v51_called: {row['v51_called']}",
@@ -391,7 +447,144 @@ def build_decision_audit_latest_text(
     )
     if execution is not None and getattr(execution, "reason", None):
         lines.append(f"- executor_reason: {getattr(execution, 'reason')}")
+    if ai_decision is not None and ai_decision.veto_reasons:
+        lines.append(f"- ai_veto_reasons: {', '.join(ai_decision.veto_reasons)}")
     return "\n".join(lines) + "\n"
+
+
+def run_execution_with_ai_reasoning(
+    execution_fn: Callable[..., Any],
+    *,
+    config: Any,
+    config_path: str | Path,
+    output_dir: str | Path,
+    mtf_context_summary_path: str | Path | None,
+    mtf_context: Any | None,
+    freshness: Any | None,
+    execute_demo: bool,
+    now: pd.Timestamp | None,
+) -> tuple[Any, ReasoningDecision | None]:
+    """Run V51 execution and optionally enforce the AI reasoning veto before demo submit."""
+    base_kwargs = {
+        "config_path": config_path,
+        "output_dir": output_dir,
+        "mtf_context_summary_path": mtf_context_summary_path,
+    }
+    if now is not None:
+        base_kwargs["now"] = now
+
+    if not _ai_reasoning_enforcement_enabled(config):
+        execution = execution_fn(dry_run=not execute_demo, **base_kwargs)
+        ai_decision = build_ai_reasoning_decision(config, mtf_context, freshness, execution=execution)
+        return execution, ai_decision
+
+    preview = execution_fn(dry_run=True, **base_kwargs)
+    ai_decision = build_ai_reasoning_decision(config, mtf_context, freshness, execution=preview)
+    if _ai_reasoning_blocks_execution(config, ai_decision, preview):
+        return _ai_blocked_execution(preview, ai_decision), ai_decision
+    if execute_demo and bool(getattr(preview, "accepted", False)):
+        execution = execution_fn(dry_run=False, **base_kwargs)
+        return execution, ai_decision
+    return preview, ai_decision
+
+
+def build_ai_reasoning_decision(
+    config: Any | None,
+    mtf_context: Any | None,
+    freshness: Any | None,
+    *,
+    execution: Any | None,
+) -> ReasoningDecision | None:
+    """Evaluate deterministic V51 AI reasoning from existing telemetry."""
+    if config is None:
+        return None
+    reasoning_input = ReasoningInput(
+        timeframes=_load_ai_timeframe_contexts(mtf_context),
+        candidate=_candidate_context_from_execution(config, execution),
+        macro=MacroContext(
+            session=getattr(execution, "session", None),
+            market_open=bool(getattr(freshness, "market_open", True)),
+        ),
+        news_risk=NewsRiskContext(),
+        mtf_final_bias=_first_present(getattr(execution, "mtf_final_bias", None), getattr(mtf_context, "final_bias", None)),
+        mtf_context_status=getattr(mtf_context, "status", None),
+        min_confidence_to_trade=float(getattr(config, "min_ai_confidence_to_trade", 70)),
+        min_trade_quality_score=float(getattr(config, "min_trade_quality_score", 70)),
+    )
+    return evaluate_v51_reasoning(reasoning_input)
+
+
+def _ai_reasoning_enforcement_enabled(config: Any) -> bool:
+    return bool(getattr(config, "use_ai_reasoning_filter", False)) and not bool(
+        getattr(config, "ai_reasoning_report_only", True)
+    )
+
+
+def _ai_reasoning_blocks_execution(config: Any, decision: ReasoningDecision | None, execution: Any) -> bool:
+    if not _ai_reasoning_enforcement_enabled(config):
+        return False
+    if decision is None:
+        return False
+    return bool(getattr(execution, "accepted", False)) and not decision.allow_trade
+
+
+def _ai_blocked_execution(execution: Any, decision: ReasoningDecision | None) -> Any:
+    values = dict(getattr(execution, "__dict__", {}))
+    if not values:
+        values = {
+            "signal_id": getattr(execution, "signal_id", None),
+            "side": getattr(execution, "side", None),
+            "dry_run": True,
+        }
+    veto = ", ".join(decision.veto_reasons) if decision is not None else "ai_reasoning_veto"
+    values.update(
+        {
+            "accepted": False,
+            "status": "NO_TRADE",
+            "reason": f"ai_reasoning_filter_blocked: {veto}",
+            "dry_run": True,
+        }
+    )
+    return SimpleNamespace(**values)
+
+
+def _candidate_context_from_execution(config: Any, execution: Any | None) -> CandidateContext | None:
+    if execution is None or not getattr(execution, "side", None):
+        return None
+    return CandidateContext(
+        side=str(getattr(execution, "side")),
+        score=_float_or_none(getattr(execution, "score", None)),
+        score_gap=_float_or_none(getattr(execution, "score_gap", None)),
+        risk_reward=_float_or_none(getattr(execution, "risk_reward", None)),
+        session=getattr(execution, "session", None),
+        spread_points=_float_or_none(getattr(execution, "spread_points", None)),
+        max_spread_points=_float_or_none(getattr(config, "max_spread_points", None)),
+        slippage_points=_first_present(
+            _float_or_none(getattr(execution, "slippage_points", None)),
+            _float_or_none(getattr(execution, "adverse_slippage_points", None)),
+        ),
+        max_slippage_points=_first_present(
+            _float_or_none(getattr(execution, "max_slippage_points", None)),
+            _float_or_none(getattr(config, "max_slippage_points", None)),
+        ),
+        expected_entry_price=_float_or_none(getattr(execution, "expected_entry_price", None)),
+    )
+
+
+def _load_ai_timeframe_contexts(mtf_context: Any | None) -> tuple[Any, ...]:
+    summary_path = getattr(mtf_context, "summary_path", None)
+    if summary_path is None:
+        return ()
+    path = Path(summary_path)
+    if not path.exists():
+        return ()
+    try:
+        summary = pd.read_csv(path)
+    except Exception:
+        return ()
+    if summary.empty:
+        return ()
+    return timeframe_contexts_from_records(summary.to_dict("records"))
 
 
 def append_cycle_log(path: str | Path, lines: list[str]) -> Path:
@@ -495,8 +688,24 @@ def _cycle_mode(execute_demo: bool) -> str:
 
 def _append_csv(path: Path, row: dict[str, Any], columns: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists() or path.stat().st_size == 0
+    if path.exists() and path.stat().st_size > 0:
+        try:
+            existing = pd.read_csv(path)
+        except Exception:
+            existing = pd.DataFrame(columns=columns)
+        changed = False
+        for column in columns:
+            if column not in existing.columns:
+                existing[column] = pd.NA
+                changed = True
+        if list(existing.columns) != columns:
+            changed = True
+        if changed:
+            existing[columns].to_csv(path, index=False)
+        write_header = False
     frame = pd.DataFrame([{column: row.get(column) for column in columns}], columns=columns)
-    frame.to_csv(path, mode="a", header=not path.exists(), index=False)
+    frame.to_csv(path, mode="a", header=write_header, index=False)
 
 
 def _timestamp_text(value: Any) -> str | None:
@@ -532,6 +741,14 @@ def _first_present(*values: Any) -> Any:
 def _display(value: Any) -> str:
     if value is None or value == "":
         return "n/a"
+    return str(value)
+
+
+def _join_reasoning_list(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        return " | ".join(str(item) for item in value if item)
     return str(value)
 
 

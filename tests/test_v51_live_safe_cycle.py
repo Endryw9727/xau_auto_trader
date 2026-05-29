@@ -207,7 +207,9 @@ def test_v51_live_safe_cycle_audit_scrive_no_trade_con_mtf_e_candidate(tmp_path)
             slippage_points=None,
             max_slippage_points=20.0,
             score=81.5,
+            score_gap=18.0,
             risk_reward=1.25,
+            session="NEW YORK",
             mtf_final_bias="SHORT_BIAS",
             mtf_filter_enabled=True,
             mtf_filter_passed=None,
@@ -238,6 +240,11 @@ def test_v51_live_safe_cycle_audit_scrive_no_trade_con_mtf_e_candidate(tmp_path)
     assert latest["mtf_final_bias"] == "SHORT_BIAS"
     assert latest["mtf_filter_enabled"] == True  # noqa: E712
     assert latest["mtf_filter_reason"] == "no_v51_candidate_to_filter"
+    assert latest["ai_reasoning_enabled"] == False  # noqa: E712
+    assert latest["ai_reasoning_report_only"] == True  # noqa: E712
+    assert latest["ai_final_bias"] == "SHORT_BIAS"
+    assert latest["ai_confidence_score"] >= 70
+    assert "V51 reasoning" in latest["ai_explanation"]
     assert latest["signal_id"] == "V51-202605251145-SELL"
     assert latest["side"] == "SELL"
     assert latest["expected_entry_price"] == 2400.0
@@ -246,8 +253,129 @@ def test_v51_live_safe_cycle_audit_scrive_no_trade_con_mtf_e_candidate(tmp_path)
     assert latest["risk_reward"] == 1.25
     assert latest["final_reason"] == reason
     assert "H4: trend=BEAR" in latest_text
+    assert "AI reasoning" in latest_text
     assert reason in latest_text
     assert not (tmp_path / "v51_demo_orders.csv").exists()
+
+
+def test_v51_live_safe_cycle_ai_report_only_non_blocca(tmp_path):
+    calls = []
+    dry_run_values = []
+
+    def execute_v51(**kwargs):
+        calls.append("v51")
+        dry_run_values.append(kwargs["dry_run"])
+        return SimpleNamespace(
+            status="SENT",
+            accepted=True,
+            reason="demo order accepted",
+            signal_id="V51-202605251145-SELL",
+            side="SELL",
+            latest_closed_candle_time=NOW - pd.Timedelta(minutes=15),
+            selected_candidate_time=NOW - pd.Timedelta(minutes=15),
+            candidate_age_minutes=0.0,
+            current_bid=2400.0,
+            current_ask=2400.1,
+            spread_points=10.0,
+            expected_entry_price=2400.0,
+            slippage_points=2.0,
+            max_slippage_points=20.0,
+            score=88.0,
+            score_gap=18.0,
+            risk_reward=1.5,
+            session="NEW YORK",
+            mtf_final_bias="SHORT_BIAS",
+            mtf_filter_enabled=True,
+            mtf_filter_passed=True,
+            mtf_filter_reason="mtf_direction_filter_passed",
+        )
+
+    result = script.run_v51_live_safe_cycle(
+        config_path=write_v51_config(tmp_path, use_ai_reasoning_filter=True, ai_reasoning_report_only=True),
+        log_path=tmp_path / "cycle.log",
+        output_dir=tmp_path,
+        execute_demo=True,
+        update_data_fn=lambda: calls.append("update") or [SimpleNamespace(status="OK")],
+        import_bridge_fn=lambda: calls.append("import") or [SimpleNamespace(status="OK")],
+        update_timeframes_fn=timeframe_update_ok(calls),
+        mtf_context_fn=mtf_context_with_summary(calls, tmp_path, final_bias="SHORT_BIAS"),
+        freshness_fn=lambda *_args, **_kwargs: calls.append("freshness") or make_freshness("OK"),
+        execution_fn=execute_v51,
+        now=NOW,
+    )
+
+    audit = pd.read_csv(tmp_path / "v51_decision_audit.csv").iloc[-1]
+    assert result.status == "V51_EXECUTED"
+    assert result.v51_accepted is True
+    assert dry_run_values == [False]
+    assert audit["ai_reasoning_enabled"] == True  # noqa: E712
+    assert audit["ai_reasoning_report_only"] == True  # noqa: E712
+    assert audit["ai_allow_trade"] == True  # noqa: E712
+    assert calls == ["update", "import", "timeframes", "mtf", "freshness", "v51"]
+
+
+def test_v51_live_safe_cycle_ai_enabled_blocca_sotto_score_minimo(tmp_path):
+    calls = []
+    dry_run_values = []
+
+    def execute_v51(**kwargs):
+        calls.append("v51")
+        dry_run_values.append(kwargs["dry_run"])
+        return SimpleNamespace(
+            status="DRY_RUN",
+            accepted=True,
+            reason="V51 dry-run accepted; no MT5 order was submitted.",
+            dry_run=True,
+            signal_id="V51-202605251145-SELL",
+            side="SELL",
+            latest_closed_candle_time=NOW - pd.Timedelta(minutes=15),
+            selected_candidate_time=NOW - pd.Timedelta(minutes=15),
+            candidate_age_minutes=0.0,
+            current_bid=2400.0,
+            current_ask=2400.1,
+            spread_points=10.0,
+            expected_entry_price=2400.0,
+            slippage_points=2.0,
+            max_slippage_points=20.0,
+            score=62.0,
+            score_gap=4.0,
+            risk_reward=1.2,
+            session="NEW YORK",
+            mtf_final_bias="SHORT_BIAS",
+            mtf_filter_enabled=True,
+            mtf_filter_passed=True,
+            mtf_filter_reason="mtf_direction_filter_passed",
+        )
+
+    result = script.run_v51_live_safe_cycle(
+        config_path=write_v51_config(
+            tmp_path,
+            use_ai_reasoning_filter=True,
+            ai_reasoning_report_only=False,
+            min_trade_quality_score=90,
+        ),
+        log_path=tmp_path / "cycle.log",
+        output_dir=tmp_path,
+        execute_demo=True,
+        update_data_fn=lambda: calls.append("update") or [SimpleNamespace(status="OK")],
+        import_bridge_fn=lambda: calls.append("import") or [SimpleNamespace(status="OK")],
+        update_timeframes_fn=timeframe_update_ok(calls),
+        mtf_context_fn=mtf_context_with_summary(calls, tmp_path, final_bias="SHORT_BIAS"),
+        freshness_fn=lambda *_args, **_kwargs: calls.append("freshness") or make_freshness("OK"),
+        execution_fn=execute_v51,
+        now=NOW,
+    )
+
+    audit = pd.read_csv(tmp_path / "v51_decision_audit.csv").iloc[-1]
+    assert result.status == "V51_EXECUTED"
+    assert result.v51_status == "NO_TRADE"
+    assert result.v51_accepted is False
+    assert result.reason.startswith("ai_reasoning_filter_blocked")
+    assert dry_run_values == [True]
+    assert audit["ai_reasoning_enabled"] == True  # noqa: E712
+    assert audit["ai_reasoning_report_only"] == False  # noqa: E712
+    assert audit["ai_allow_trade"] == False  # noqa: E712
+    assert "ai_trade_quality_below_minimum" in audit["ai_veto_reasons"]
 
 
 def test_v51_live_safe_cycle_blocca_live_reale(tmp_path):
