@@ -58,6 +58,37 @@ def mtf_context_ok(calls, *, final_bias="SHORT_BIAS"):
     return mtf_context
 
 
+def mtf_context_with_summary(calls, tmp_path, *, final_bias="SHORT_BIAS"):
+    summary_path = tmp_path / "v51_mtf_context_summary.csv"
+    pd.DataFrame(
+        [
+            {
+                "final_bias": final_bias,
+                "timeframe": "H4",
+                "status": "OK",
+                "data_status": "OK",
+                "used_in_bias": True,
+                "trend_direction": "BEAR" if final_bias == "SHORT_BIAS" else "BULL",
+            },
+            {
+                "final_bias": final_bias,
+                "timeframe": "M15",
+                "status": "OK",
+                "data_status": "OK",
+                "used_in_bias": True,
+                "trend_direction": "BEAR" if final_bias == "SHORT_BIAS" else "BULL",
+            },
+        ]
+    ).to_csv(summary_path, index=False)
+
+    def mtf_context(**kwargs):
+        calls.append("mtf")
+        assert "config_path" in kwargs
+        return SimpleNamespace(status="OK", final_bias=final_bias, summary_path=summary_path, latest_path=tmp_path / "mtf.txt")
+
+    return mtf_context
+
+
 def test_v51_live_safe_cycle_non_esegue_v51_se_dati_stale(tmp_path):
     calls = []
 
@@ -96,6 +127,17 @@ def test_v51_live_safe_cycle_non_esegue_v51_se_dati_stale(tmp_path):
     assert result.mtf_context_status == "OK"
     assert result.mtf_final_bias == "SHORT_BIAS"
     assert calls == ["update", "import", "timeframes", "mtf", "freshness"]
+
+    audit = pd.read_csv(tmp_path / "v51_decision_audit.csv")
+    latest_text = (tmp_path / "v51_decision_audit_latest.txt").read_text(encoding="utf-8")
+    latest = audit.iloc[-1]
+    assert latest["v51_called"] == False  # noqa: E712
+    assert pd.isna(latest["v51_status"])
+    assert latest["mtf_context_status"] == "OK"
+    assert latest["mtf_final_bias"] == "SHORT_BIAS"
+    assert latest["final_reason"].startswith("STALE")
+    assert "Market data freshness" in latest_text
+    assert "Final decision" in latest_text
 
 
 def test_v51_live_safe_cycle_chiama_v51_se_dati_freschi(tmp_path):
@@ -140,6 +182,72 @@ def test_v51_live_safe_cycle_chiama_v51_se_dati_freschi(tmp_path):
     assert result.mtf_context_status == "OK"
     assert result.mtf_final_bias == "SHORT_BIAS"
     assert calls == ["update", "import", "timeframes", "mtf", "freshness", "v51"]
+
+
+def test_v51_live_safe_cycle_audit_scrive_no_trade_con_mtf_e_candidate(tmp_path):
+    calls = []
+    reason = "no fresh live candidate on latest closed candle"
+
+    def execute_v51(**kwargs):
+        calls.append("v51")
+        assert kwargs["dry_run"] is True
+        return SimpleNamespace(
+            status="NO_TRADE",
+            accepted=False,
+            reason=reason,
+            signal_id="V51-202605251145-SELL",
+            side="SELL",
+            latest_closed_candle_time=NOW - pd.Timedelta(minutes=15),
+            selected_candidate_time=NOW - pd.Timedelta(minutes=15),
+            candidate_age_minutes=0.0,
+            current_bid=2400.0,
+            current_ask=2400.1,
+            spread_points=10.0,
+            expected_entry_price=2400.0,
+            slippage_points=None,
+            max_slippage_points=20.0,
+            score=81.5,
+            risk_reward=1.25,
+            mtf_final_bias="SHORT_BIAS",
+            mtf_filter_enabled=True,
+            mtf_filter_passed=None,
+            mtf_filter_reason="no_v51_candidate_to_filter",
+        )
+
+    result = script.run_v51_live_safe_cycle(
+        config_path=write_v51_config(tmp_path, use_mtf_context_filter=True),
+        log_path=tmp_path / "cycle.log",
+        output_dir=tmp_path,
+        update_data_fn=lambda: calls.append("update") or [SimpleNamespace(status="OK")],
+        import_bridge_fn=lambda: calls.append("import") or [SimpleNamespace(status="OK")],
+        update_timeframes_fn=timeframe_update_ok(calls),
+        mtf_context_fn=mtf_context_with_summary(calls, tmp_path, final_bias="SHORT_BIAS"),
+        freshness_fn=lambda *_args, **_kwargs: calls.append("freshness") or make_freshness("OK"),
+        execution_fn=execute_v51,
+        now=NOW,
+    )
+
+    audit = pd.read_csv(tmp_path / "v51_decision_audit.csv")
+    latest_text = (tmp_path / "v51_decision_audit_latest.txt").read_text(encoding="utf-8")
+    latest = audit.iloc[-1]
+    assert result.status == "V51_EXECUTED"
+    assert latest["mode"] == "DRY_RUN"
+    assert latest["v51_status"] == "NO_TRADE"
+    assert latest["v51_accepted"] == False  # noqa: E712
+    assert latest["mtf_context_status"] == "OK"
+    assert latest["mtf_final_bias"] == "SHORT_BIAS"
+    assert latest["mtf_filter_enabled"] == True  # noqa: E712
+    assert latest["mtf_filter_reason"] == "no_v51_candidate_to_filter"
+    assert latest["signal_id"] == "V51-202605251145-SELL"
+    assert latest["side"] == "SELL"
+    assert latest["expected_entry_price"] == 2400.0
+    assert latest["max_slippage_points"] == 20.0
+    assert latest["score"] == 81.5
+    assert latest["risk_reward"] == 1.25
+    assert latest["final_reason"] == reason
+    assert "H4: trend=BEAR" in latest_text
+    assert reason in latest_text
+    assert not (tmp_path / "v51_demo_orders.csv").exists()
 
 
 def test_v51_live_safe_cycle_blocca_live_reale(tmp_path):

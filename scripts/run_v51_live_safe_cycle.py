@@ -23,6 +23,38 @@ from scripts.update_mt5_timeframes import run_mt5_timeframe_update
 
 
 DEFAULT_V51_LIVE_SAFE_CYCLE_LOG_PATH = DEFAULT_V51_DEMO_OUTPUT_DIR / "v51_live_safe_cycle.log"
+DEFAULT_V51_DECISION_AUDIT_CSV_PATH = DEFAULT_V51_DEMO_OUTPUT_DIR / "v51_decision_audit.csv"
+DEFAULT_V51_DECISION_AUDIT_LATEST_PATH = DEFAULT_V51_DEMO_OUTPUT_DIR / "v51_decision_audit_latest.txt"
+
+V51_DECISION_AUDIT_COLUMNS = [
+    "timestamp",
+    "mode",
+    "symbol",
+    "latest_closed_candle_time",
+    "latest_closed_candle_age_minutes",
+    "current_bid",
+    "current_ask",
+    "spread_points",
+    "mtf_context_status",
+    "mtf_final_bias",
+    "mtf_filter_enabled",
+    "mtf_filter_passed",
+    "mtf_filter_reason",
+    "v51_called",
+    "v51_status",
+    "v51_accepted",
+    "signal_id",
+    "side",
+    "selected_candidate_time",
+    "candidate_age_minutes",
+    "expected_entry_price",
+    "slippage_points",
+    "max_slippage_points",
+    "score",
+    "risk_reward",
+    "final_reason",
+    "dry_run",
+]
 
 
 @dataclass(frozen=True)
@@ -77,6 +109,16 @@ def run_v51_live_safe_cycle(
         )
         lines.append(f"SAFETY_ERROR {result.reason}")
         lines.append("No real live execution is enabled.")
+        write_decision_audit(
+            output_dir,
+            mode=_cycle_mode(execute_demo),
+            config=None,
+            freshness=None,
+            mtf_context=None,
+            cycle_result=result,
+            execution=None,
+            dry_run=not execute_demo,
+        )
         append_cycle_log(log_path, lines)
         return result
 
@@ -94,6 +136,16 @@ def run_v51_live_safe_cycle(
         )
         lines.append(result.reason)
         lines.append("No real live execution is enabled.")
+        write_decision_audit(
+            output_dir,
+            mode=_cycle_mode(execute_demo),
+            config=config,
+            freshness=None,
+            mtf_context=None,
+            cycle_result=result,
+            execution=None,
+            dry_run=not execute_demo,
+        )
         append_cycle_log(log_path, lines)
         return result
 
@@ -127,6 +179,16 @@ def run_v51_live_safe_cycle(
         lines.append(f"DATA_STALE {freshness_detail}")
         lines.append("V51 demo execution skipped because local data is not fresh.")
         lines.append("No real live execution is enabled.")
+        write_decision_audit(
+            output_dir,
+            mode=_cycle_mode(execute_demo),
+            config=config,
+            freshness=freshness,
+            mtf_context=mtf_context,
+            cycle_result=result,
+            execution=None,
+            dry_run=not execute_demo,
+        )
         append_cycle_log(log_path, lines)
         return result
 
@@ -155,8 +217,181 @@ def run_v51_live_safe_cycle(
         f"status={result.v51_status} accepted={result.v51_accepted} reason={result.reason}"
     )
     lines.append("No real live execution is enabled.")
+    write_decision_audit(
+        output_dir,
+        mode=_cycle_mode(execute_demo),
+        config=config,
+        freshness=freshness,
+        mtf_context=mtf_context,
+        cycle_result=result,
+        execution=execution,
+        dry_run=not execute_demo,
+    )
     append_cycle_log(log_path, lines)
     return result
+
+
+def write_decision_audit(
+    output_dir: str | Path,
+    *,
+    mode: str,
+    config: Any | None,
+    freshness: Any | None,
+    mtf_context: Any | None,
+    cycle_result: V51LiveSafeCycleResult,
+    execution: Any | None,
+    dry_run: bool,
+) -> tuple[Path, Path]:
+    """Append one cycle audit row and refresh the human-readable latest file."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    csv_path = output_path / DEFAULT_V51_DECISION_AUDIT_CSV_PATH.name
+    latest_path = output_path / DEFAULT_V51_DECISION_AUDIT_LATEST_PATH.name
+    row = build_decision_audit_row(
+        mode=mode,
+        config=config,
+        freshness=freshness,
+        mtf_context=mtf_context,
+        cycle_result=cycle_result,
+        execution=execution,
+        dry_run=dry_run,
+    )
+    _append_csv(csv_path, row, V51_DECISION_AUDIT_COLUMNS)
+    latest_path.write_text(
+        build_decision_audit_latest_text(
+            row,
+            freshness=freshness,
+            mtf_context=mtf_context,
+            cycle_result=cycle_result,
+            execution=execution,
+        ),
+        encoding="utf-8",
+    )
+    return csv_path, latest_path
+
+
+def build_decision_audit_row(
+    *,
+    mode: str,
+    config: Any | None,
+    freshness: Any | None,
+    mtf_context: Any | None,
+    cycle_result: V51LiveSafeCycleResult,
+    execution: Any | None,
+    dry_run: bool,
+) -> dict[str, Any]:
+    """Build one flat V51 cycle audit row from existing read-only telemetry."""
+    latest_closed = _first_present(
+        getattr(execution, "latest_closed_candle_time", None),
+        getattr(freshness, "latest_timestamp", None),
+    )
+    mtf_filter_enabled = _first_present(
+        getattr(execution, "mtf_filter_enabled", None),
+        getattr(config, "use_mtf_context_filter", None),
+    )
+    mtf_filter_passed = getattr(execution, "mtf_filter_passed", None)
+    mtf_filter_reason = _first_present(
+        getattr(execution, "mtf_filter_reason", None),
+        "v51_not_called" if not cycle_result.v51_called else None,
+    )
+    mtf_final_bias = _first_present(
+        getattr(execution, "mtf_final_bias", None),
+        getattr(mtf_context, "final_bias", None),
+        cycle_result.mtf_final_bias,
+    )
+    return {
+        "timestamp": pd.Timestamp.now(tz="UTC").isoformat(),
+        "mode": mode,
+        "symbol": getattr(config, "symbol", None),
+        "latest_closed_candle_time": _timestamp_text(latest_closed),
+        "latest_closed_candle_age_minutes": _float_or_none(getattr(freshness, "age_minutes", None)),
+        "current_bid": _float_or_none(getattr(execution, "current_bid", None)),
+        "current_ask": _float_or_none(getattr(execution, "current_ask", None)),
+        "spread_points": _float_or_none(getattr(execution, "spread_points", None)),
+        "mtf_context_status": cycle_result.mtf_context_status,
+        "mtf_final_bias": None if mtf_final_bias is None else str(mtf_final_bias),
+        "mtf_filter_enabled": mtf_filter_enabled,
+        "mtf_filter_passed": mtf_filter_passed,
+        "mtf_filter_reason": mtf_filter_reason,
+        "v51_called": cycle_result.v51_called,
+        "v51_status": cycle_result.v51_status,
+        "v51_accepted": cycle_result.v51_accepted,
+        "signal_id": getattr(execution, "signal_id", None),
+        "side": getattr(execution, "side", None),
+        "selected_candidate_time": _timestamp_text(getattr(execution, "selected_candidate_time", None)),
+        "candidate_age_minutes": _float_or_none(getattr(execution, "candidate_age_minutes", None)),
+        "expected_entry_price": _float_or_none(getattr(execution, "expected_entry_price", None)),
+        "slippage_points": _float_or_none(getattr(execution, "slippage_points", None)),
+        "max_slippage_points": _first_present(
+            _float_or_none(getattr(execution, "max_slippage_points", None)),
+            _float_or_none(getattr(config, "max_slippage_points", None)),
+        ),
+        "score": _float_or_none(getattr(execution, "score", None)),
+        "risk_reward": _float_or_none(getattr(execution, "risk_reward", None)),
+        "final_reason": cycle_result.reason,
+        "dry_run": dry_run,
+    }
+
+
+def build_decision_audit_latest_text(
+    row: dict[str, Any],
+    *,
+    freshness: Any | None,
+    mtf_context: Any | None,
+    cycle_result: V51LiveSafeCycleResult,
+    execution: Any | None,
+) -> str:
+    """Build a concise latest-cycle audit summary for operators."""
+    lines = [
+        "V51 Decision Audit",
+        f"Generated at: {row['timestamp']}",
+        "",
+        "Market data freshness",
+        f"- status: {cycle_result.freshness_status}",
+        f"- latest_closed_candle_time: {row['latest_closed_candle_time'] or 'n/a'}",
+        f"- latest_closed_candle_age_minutes: {_display(row['latest_closed_candle_age_minutes'])}",
+        f"- detail: {format_freshness_detail(freshness) if freshness is not None else cycle_result.reason}",
+        "",
+        "MTF context",
+        f"- status: {cycle_result.mtf_context_status}",
+        f"- final_bias: {row['mtf_final_bias'] or 'n/a'}",
+    ]
+    timeframe_lines = _mtf_timeframe_summary_lines(mtf_context)
+    if timeframe_lines:
+        lines.append("- timeframe bias:")
+        lines.extend(f"  - {line}" for line in timeframe_lines)
+    else:
+        lines.append("- timeframe bias: unavailable")
+    lines.extend(
+        [
+            "",
+            "Candidate status",
+            f"- v51_called: {row['v51_called']}",
+            f"- v51_status: {row['v51_status'] or 'n/a'}",
+            f"- v51_accepted: {_display(row['v51_accepted'])}",
+            f"- signal_id: {row['signal_id'] or 'n/a'}",
+            f"- side: {row['side'] or 'n/a'}",
+            f"- selected_candidate_time: {row['selected_candidate_time'] or 'n/a'}",
+            f"- candidate_age_minutes: {_display(row['candidate_age_minutes'])}",
+            f"- score: {_display(row['score'])}",
+            f"- risk_reward: {_display(row['risk_reward'])}",
+            "",
+            "Final decision",
+            f"- mode: {row['mode']}",
+            f"- mtf_filter_enabled: {_display(row['mtf_filter_enabled'])}",
+            f"- mtf_filter_passed: {_display(row['mtf_filter_passed'])}",
+            f"- mtf_filter_reason: {row['mtf_filter_reason'] or 'n/a'}",
+            f"- current_bid: {_display(row['current_bid'])}",
+            f"- current_ask: {_display(row['current_ask'])}",
+            f"- spread_points: {_display(row['spread_points'])}",
+            f"- slippage_points: {_display(row['slippage_points'])}",
+            f"- max_slippage_points: {_display(row['max_slippage_points'])}",
+            f"- exact_rejection_reason: {cycle_result.reason}",
+        ]
+    )
+    if execution is not None and getattr(execution, "reason", None):
+        lines.append(f"- executor_reason: {getattr(execution, 'reason')}")
+    return "\n".join(lines) + "\n"
 
 
 def append_cycle_log(path: str | Path, lines: list[str]) -> Path:
@@ -252,6 +487,75 @@ def _result_statuses(results: list[Any]) -> tuple[str, ...]:
 
 def _header(label: str) -> str:
     return f"================ {pd.Timestamp.now().isoformat()} {label} ================"
+
+
+def _cycle_mode(execute_demo: bool) -> str:
+    return "EXECUTE_DEMO" if execute_demo else "DRY_RUN"
+
+
+def _append_csv(path: Path, row: dict[str, Any], columns: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame = pd.DataFrame([{column: row.get(column) for column in columns}], columns=columns)
+    frame.to_csv(path, mode="a", header=not path.exists(), index=False)
+
+
+def _timestamp_text(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    try:
+        return pd.Timestamp(value).isoformat()
+    except Exception:
+        return str(value)
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        if pd.isna(value):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and value == "":
+            continue
+        return value
+    return None
+
+
+def _display(value: Any) -> str:
+    if value is None or value == "":
+        return "n/a"
+    return str(value)
+
+
+def _mtf_timeframe_summary_lines(mtf_context: Any | None) -> list[str]:
+    summary_path = getattr(mtf_context, "summary_path", None)
+    if summary_path is None:
+        return []
+    path = Path(summary_path)
+    if not path.exists():
+        return []
+    try:
+        summary = pd.read_csv(path)
+    except Exception:
+        return []
+    if summary.empty or "timeframe" not in summary.columns:
+        return []
+    lines: list[str] = []
+    for _, row in summary.iterrows():
+        timeframe = row.get("timeframe", "")
+        trend = row.get("trend_direction", row.get("status", ""))
+        data_status = row.get("data_status", row.get("status", ""))
+        used = row.get("used_in_bias", "")
+        lines.append(f"{timeframe}: trend={trend}, data_status={data_status}, used_in_bias={used}")
+    return lines
 
 
 @dataclass(frozen=True)
