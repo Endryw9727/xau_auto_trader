@@ -32,9 +32,22 @@ def make_freshness(status: str) -> DataFreshnessReport:
     )
 
 
-def write_v51_config(tmp_path, **overrides):
+def write_v51_config(
+    tmp_path,
+    *,
+    use_ai_reasoning_filter: bool = False,
+    ai_reasoning_report_only: bool = False,
+    **overrides,
+):
     raw = yaml.safe_load(open("config/strategy_v51.yaml", encoding="utf-8"))
-    raw.update({"allow_real_live": False, "demo_only": True})
+    raw.update(
+        {
+            "allow_real_live": False,
+            "demo_only": True,
+            "use_ai_reasoning_filter": use_ai_reasoning_filter,
+            "ai_reasoning_report_only": ai_reasoning_report_only,
+        }
+    )
     raw.update(overrides)
     path = tmp_path / "strategy_v51.yaml"
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
@@ -241,7 +254,7 @@ def test_v51_live_safe_cycle_audit_scrive_no_trade_con_mtf_e_candidate(tmp_path)
     assert latest["mtf_filter_enabled"] == True  # noqa: E712
     assert latest["mtf_filter_reason"] == "no_v51_candidate_to_filter"
     assert latest["ai_reasoning_enabled"] == False  # noqa: E712
-    assert latest["ai_reasoning_report_only"] == True  # noqa: E712
+    assert latest["ai_reasoning_report_only"] == False  # noqa: E712
     assert latest["ai_final_bias"] == "SHORT_BIAS"
     assert latest["ai_confidence_score"] >= 70
     assert "V51 reasoning" in latest["ai_explanation"]
@@ -311,6 +324,54 @@ def test_v51_live_safe_cycle_ai_report_only_non_blocca(tmp_path):
     assert audit["ai_reasoning_enabled"] == True  # noqa: E712
     assert audit["ai_reasoning_report_only"] == True  # noqa: E712
     assert audit["ai_allow_trade"] == True  # noqa: E712
+    assert calls == ["update", "import", "timeframes", "mtf", "freshness", "v51"]
+
+
+def test_v51_live_safe_cycle_ai_report_only_no_candidate_resta_no_trade(tmp_path):
+    calls = []
+
+    def execute_v51(**kwargs):
+        calls.append("v51")
+        assert kwargs["dry_run"] is True
+        return SimpleNamespace(
+            status="NO_TRADE",
+            accepted=False,
+            reason="no fresh live candidate on latest closed candle",
+            latest_closed_candle_time=NOW - pd.Timedelta(minutes=15),
+            selected_candidate_time=None,
+            candidate_age_minutes=None,
+            current_bid=2400.0,
+            current_ask=2400.1,
+            spread_points=10.0,
+            max_slippage_points=20.0,
+            mtf_final_bias="SHORT_BIAS",
+            mtf_filter_enabled=True,
+            mtf_filter_passed=None,
+            mtf_filter_reason="no_v51_candidate_to_filter",
+        )
+
+    result = script.run_v51_live_safe_cycle(
+        config_path=write_v51_config(tmp_path, use_ai_reasoning_filter=True, ai_reasoning_report_only=True),
+        log_path=tmp_path / "cycle.log",
+        output_dir=tmp_path,
+        update_data_fn=lambda: calls.append("update") or [SimpleNamespace(status="OK")],
+        import_bridge_fn=lambda: calls.append("import") or [SimpleNamespace(status="OK")],
+        update_timeframes_fn=timeframe_update_ok(calls),
+        mtf_context_fn=mtf_context_with_summary(calls, tmp_path, final_bias="SHORT_BIAS"),
+        freshness_fn=lambda *_args, **_kwargs: calls.append("freshness") or make_freshness("OK"),
+        execution_fn=execute_v51,
+        now=NOW,
+    )
+
+    audit = pd.read_csv(tmp_path / "v51_decision_audit.csv").iloc[-1]
+    assert result.status == "V51_EXECUTED"
+    assert result.v51_status == "NO_TRADE"
+    assert result.v51_accepted is False
+    assert audit["ai_reasoning_enabled"] == True  # noqa: E712
+    assert audit["ai_reasoning_report_only"] == True  # noqa: E712
+    assert audit["ai_allow_trade"] == False  # noqa: E712
+    assert "no_v51_candidate" in audit["ai_veto_reasons"]
+    assert not (tmp_path / "v51_demo_orders.csv").exists()
     assert calls == ["update", "import", "timeframes", "mtf", "freshness", "v51"]
 
 
