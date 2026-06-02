@@ -40,7 +40,12 @@ V51_DECISION_AUDIT_COLUMNS = [
     "timestamp",
     "mode",
     "symbol",
+    "now_utc",
+    "now_local",
+    "mt5_timestamp_timezone",
     "latest_closed_candle_time",
+    "latest_closed_candle_time_raw",
+    "latest_closed_candle_time_utc",
     "latest_closed_candle_age_minutes",
     "current_bid",
     "current_ask",
@@ -66,7 +71,11 @@ V51_DECISION_AUDIT_COLUMNS = [
     "signal_id",
     "side",
     "selected_candidate_time",
+    "selected_candidate_time_raw",
+    "selected_candidate_time_utc",
     "candidate_age_minutes",
+    "candidate_time_basis",
+    "time_alignment_status",
     "expected_entry_price",
     "slippage_points",
     "max_slippage_points",
@@ -181,7 +190,7 @@ def run_v51_live_safe_cycle(
     mtf_context_status = str(getattr(mtf_context, "status", "ERROR"))
     mtf_final_bias = getattr(mtf_context, "final_bias", None)
 
-    freshness = _call_freshness(freshness_fn, data_path, now)
+    freshness = _call_freshness(freshness_fn, data_path, now, config=config)
     freshness_status = str(getattr(freshness, "status", "ERROR"))
     freshness_detail = format_freshness_detail(freshness)
     lines.append(f"DATA_FRESHNESS {freshness_detail}")
@@ -318,6 +327,23 @@ def build_decision_audit_row(
         getattr(execution, "latest_closed_candle_time", None),
         getattr(freshness, "latest_timestamp", None),
     )
+    latest_closed_raw = _first_present(
+        getattr(execution, "latest_closed_candle_time_raw", None),
+        _timestamp_text(getattr(freshness, "latest_timestamp", None)),
+    )
+    latest_closed_utc = _first_present(
+        getattr(execution, "latest_closed_candle_time_utc", None),
+        latest_closed,
+    )
+    selected_candidate_utc = _first_present(
+        getattr(execution, "selected_candidate_time_utc", None),
+        getattr(execution, "selected_candidate_time", None),
+    )
+    mt5_timezone = _first_present(
+        getattr(execution, "mt5_timestamp_timezone", None),
+        getattr(config, "mt5_timestamp_timezone", None),
+        "Europe/Rome",
+    )
     mtf_filter_enabled = _first_present(
         getattr(execution, "mtf_filter_enabled", None),
         getattr(config, "use_mtf_context_filter", None),
@@ -336,7 +362,18 @@ def build_decision_audit_row(
         "timestamp": pd.Timestamp.now(tz="UTC").isoformat(),
         "mode": mode,
         "symbol": getattr(config, "symbol", None),
+        "now_utc": _utc_timestamp_text(
+            _first_present(getattr(execution, "now_utc", None), getattr(freshness, "checked_at", None)),
+            str(mt5_timezone),
+        ),
+        "now_local": _first_present(
+            getattr(execution, "now_local", None),
+            _local_timestamp_text(getattr(freshness, "checked_at", None), str(mt5_timezone)),
+        ),
+        "mt5_timestamp_timezone": mt5_timezone,
         "latest_closed_candle_time": _timestamp_text(latest_closed),
+        "latest_closed_candle_time_raw": latest_closed_raw,
+        "latest_closed_candle_time_utc": _utc_timestamp_text(latest_closed_utc, str(mt5_timezone)),
         "latest_closed_candle_age_minutes": _float_or_none(getattr(freshness, "age_minutes", None)),
         "current_bid": _float_or_none(getattr(execution, "current_bid", None)),
         "current_ask": _float_or_none(getattr(execution, "current_ask", None)),
@@ -362,7 +399,11 @@ def build_decision_audit_row(
         "signal_id": getattr(execution, "signal_id", None),
         "side": getattr(execution, "side", None),
         "selected_candidate_time": _timestamp_text(getattr(execution, "selected_candidate_time", None)),
+        "selected_candidate_time_raw": getattr(execution, "selected_candidate_time_raw", None),
+        "selected_candidate_time_utc": _utc_timestamp_text(selected_candidate_utc, str(mt5_timezone)),
         "candidate_age_minutes": _float_or_none(getattr(execution, "candidate_age_minutes", None)),
+        "candidate_time_basis": getattr(execution, "candidate_time_basis", None),
+        "time_alignment_status": getattr(execution, "time_alignment_status", None),
         "expected_entry_price": _float_or_none(getattr(execution, "expected_entry_price", None)),
         "slippage_points": _float_or_none(getattr(execution, "slippage_points", None)),
         "max_slippage_points": _first_present(
@@ -395,6 +436,17 @@ def build_decision_audit_latest_text(
         f"- latest_closed_candle_time: {row['latest_closed_candle_time'] or 'n/a'}",
         f"- latest_closed_candle_age_minutes: {_display(row['latest_closed_candle_age_minutes'])}",
         f"- detail: {format_freshness_detail(freshness) if freshness is not None else cycle_result.reason}",
+        "",
+        "Time alignment",
+        f"- now_utc: {row['now_utc'] or 'n/a'}",
+        f"- now_local: {row['now_local'] or 'n/a'}",
+        f"- mt5_timestamp_timezone: {row['mt5_timestamp_timezone'] or 'n/a'}",
+        f"- latest_closed_candle_time_raw: {row['latest_closed_candle_time_raw'] or 'n/a'}",
+        f"- latest_closed_candle_time_utc: {row['latest_closed_candle_time_utc'] or 'n/a'}",
+        f"- selected_candidate_time_raw: {row['selected_candidate_time_raw'] or 'n/a'}",
+        f"- selected_candidate_time_utc: {row['selected_candidate_time_utc'] or 'n/a'}",
+        f"- candidate_time_basis: {row['candidate_time_basis'] or 'n/a'}",
+        f"- time_alignment_status: {row['time_alignment_status'] or 'n/a'}",
         "",
         "MTF context",
         f"- status: {cycle_result.mtf_context_status}",
@@ -667,8 +719,14 @@ def _safe_call_single(label: str, fn: Callable[..., Any], lines: list[str], **kw
     return result
 
 
-def _call_freshness(fn: Callable[..., Any], data_path: str | Path, now: pd.Timestamp | None) -> Any:
-    kwargs = {"symbol": "XAUUSD"}
+def _call_freshness(
+    fn: Callable[..., Any],
+    data_path: str | Path,
+    now: pd.Timestamp | None,
+    *,
+    config: Any,
+) -> Any:
+    kwargs = {"symbol": "XAUUSD", "mt5_timestamp_timezone": getattr(config, "mt5_timestamp_timezone", "Europe/Rome")}
     if now is not None:
         kwargs["now"] = now
     return fn(data_path, **kwargs)
@@ -715,6 +773,34 @@ def _timestamp_text(value: Any) -> str | None:
         return pd.Timestamp(value).isoformat()
     except Exception:
         return str(value)
+
+
+def _local_timestamp_text(value: Any, timezone: str) -> str | None:
+    if value is None or value == "":
+        return None
+    try:
+        timestamp = pd.Timestamp(value)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize(timezone)
+        else:
+            timestamp = timestamp.tz_convert(timezone)
+        return timestamp.isoformat()
+    except Exception:
+        return None
+
+
+def _utc_timestamp_text(value: Any, timezone: str) -> str | None:
+    if value is None or value == "":
+        return None
+    try:
+        timestamp = pd.Timestamp(value)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize(timezone)
+        else:
+            timestamp = timestamp.tz_convert("UTC")
+        return timestamp.tz_convert("UTC").isoformat()
+    except Exception:
+        return None
 
 
 def _float_or_none(value: Any) -> float | None:

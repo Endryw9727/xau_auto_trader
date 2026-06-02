@@ -331,6 +331,80 @@ def test_v51_demo_executor_rifiuta_candidate_futuro(tmp_path, monkeypatch):
     assert fake.order_send_called is False
 
 
+def test_v51_demo_executor_non_scambia_mt5_naive_locale_per_futuro(tmp_path, monkeypatch):
+    now = pd.Timestamp("2026-06-02 22:06:00", tz="UTC")
+    config_path = write_v51_config(tmp_path, mt5_timestamp_timezone="Europe/Rome")
+    market_data = pd.DataFrame(
+        {
+            "Open": [2399.0, 2399.5],
+            "High": [2401.0, 2401.5],
+            "Low": [2398.5, 2399.0],
+            "Close": [2400.0, 2400.5],
+            "Volume": [1000.0, 1000.0],
+        },
+        index=pd.DatetimeIndex(["2026-06-02 23:30:00", "2026-06-02 23:45:00"]),
+    )
+    monkeypatch.setattr(executor, "read_mt5_closed_rates", lambda mt5, config: market_data)
+    candidate = make_candidate(
+        signal_id="V51-202606022345-BUY",
+        candle_time=pd.Timestamp("2026-06-02 23:45:00"),
+        entry_price=2400.0,
+    )
+    force_selected_candidate(monkeypatch, candidate)
+    fake = FakeV51MT5(bid=2400.00, ask=2400.10)
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        now=now,
+    )
+
+    assert result.status == "DRY_RUN"
+    assert result.reason != "candidate_time_in_future"
+    assert result.latest_closed_candle_time_utc == pd.Timestamp("2026-06-02 21:45:00", tz="UTC")
+    assert result.selected_candidate_time_utc == pd.Timestamp("2026-06-02 21:45:00", tz="UTC")
+    assert result.candidate_age_minutes == pytest.approx(0.0)
+    assert result.mt5_timestamp_timezone == "Europe/Rome"
+    assert fake.order_send_called is False
+
+
+def test_v51_demo_executor_blocca_futuro_reale_dopo_conversione_locale(tmp_path, monkeypatch):
+    now = pd.Timestamp("2026-06-02 22:06:00", tz="UTC")
+    config_path = write_v51_config(tmp_path, mt5_timestamp_timezone="Europe/Rome")
+    market_data = pd.DataFrame(
+        {
+            "Open": [2399.0, 2399.5],
+            "High": [2401.0, 2401.5],
+            "Low": [2398.5, 2399.0],
+            "Close": [2400.0, 2400.5],
+            "Volume": [1000.0, 1000.0],
+        },
+        index=pd.DatetimeIndex(["2026-06-02 23:30:00", "2026-06-02 23:45:00"]),
+    )
+    monkeypatch.setattr(executor, "read_mt5_closed_rates", lambda mt5, config: market_data)
+    candidate = make_candidate(
+        signal_id="V51-202606030015-BUY",
+        candle_time=pd.Timestamp("2026-06-03 00:15:00"),
+        entry_price=2400.0,
+    )
+    force_selected_candidate(monkeypatch, candidate)
+    fake = FakeV51MT5(bid=2400.00, ask=2400.10)
+
+    result = executor.run_v51_demo_execution_once(
+        config_path=config_path,
+        output_dir=tmp_path,
+        mt5_module=fake,
+        now=now,
+    )
+
+    assert result.status == "NO_TRADE"
+    assert result.reason == "candidate_time_in_future"
+    assert result.selected_candidate_time_utc == pd.Timestamp("2026-06-02 22:15:00", tz="UTC")
+    assert result.time_alignment_status == "candidate_time_in_future"
+    assert fake.order_send_called is False
+
+
 def test_v51_demo_executor_candidate_fresco_arriva_al_controllo_successivo(tmp_path, monkeypatch):
     config_path = write_v51_config(tmp_path, use_mtf_context_filter=True)
     mtf_path = write_mtf_summary(tmp_path, final_bias="LONG_BIAS")

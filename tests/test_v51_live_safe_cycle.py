@@ -208,11 +208,20 @@ def test_v51_live_safe_cycle_audit_scrive_no_trade_con_mtf_e_candidate(tmp_path)
             status="NO_TRADE",
             accepted=False,
             reason=reason,
+            now_utc=pd.Timestamp("2026-05-25 10:00:00", tz="UTC"),
+            now_local="2026-05-25T12:00:00+02:00",
+            mt5_timestamp_timezone="Europe/Rome",
             signal_id="V51-202605251145-SELL",
             side="SELL",
             latest_closed_candle_time=NOW - pd.Timedelta(minutes=15),
+            latest_closed_candle_time_raw="2026-05-25T11:45:00",
+            latest_closed_candle_time_utc=pd.Timestamp("2026-05-25 09:45:00", tz="UTC"),
             selected_candidate_time=NOW - pd.Timedelta(minutes=15),
+            selected_candidate_time_raw="2026-05-25T11:45:00",
+            selected_candidate_time_utc=pd.Timestamp("2026-05-25 09:45:00", tz="UTC"),
             candidate_age_minutes=0.0,
+            candidate_time_basis="mt5_csv_naive_Europe/Rome_to_utc",
+            time_alignment_status="OK",
             current_bid=2400.0,
             current_ask=2400.1,
             spread_points=10.0,
@@ -247,6 +256,15 @@ def test_v51_live_safe_cycle_audit_scrive_no_trade_con_mtf_e_candidate(tmp_path)
     latest = audit.iloc[-1]
     assert result.status == "V51_EXECUTED"
     assert latest["mode"] == "DRY_RUN"
+    assert latest["now_utc"] == "2026-05-25T10:00:00+00:00"
+    assert latest["now_local"] == "2026-05-25T12:00:00+02:00"
+    assert latest["mt5_timestamp_timezone"] == "Europe/Rome"
+    assert latest["latest_closed_candle_time_raw"] == "2026-05-25T11:45:00"
+    assert latest["latest_closed_candle_time_utc"] == "2026-05-25T09:45:00+00:00"
+    assert latest["selected_candidate_time_raw"] == "2026-05-25T11:45:00"
+    assert latest["selected_candidate_time_utc"] == "2026-05-25T09:45:00+00:00"
+    assert latest["candidate_time_basis"] == "mt5_csv_naive_Europe/Rome_to_utc"
+    assert latest["time_alignment_status"] == "OK"
     assert latest["v51_status"] == "NO_TRADE"
     assert latest["v51_accepted"] == False  # noqa: E712
     assert latest["mtf_context_status"] == "OK"

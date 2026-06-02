@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from src.data_feed.market_data import load_csv_data
+from src.utils.time_alignment import now_utc, to_utc_index
 
 
 DEFAULT_XAUUSD_CSV_PATH = Path("data/raw/xauusd.csv")
@@ -80,6 +81,7 @@ def analyze_data_freshness(
     ok_age_minutes: float = 30.0,
     warning_age_minutes: float = 90.0,
     closed_market_max_age_minutes: float = 3 * 24 * 60.0,
+    mt5_timestamp_timezone: str | None = None,
 ) -> DataFreshnessReport:
     """Load a local OHLCV CSV and calculate freshness diagnostics."""
     checked_at = normalize_now(now, timezone)
@@ -98,6 +100,8 @@ def analyze_data_freshness(
         symbol=symbol,
         expected_timeframe_minutes=expected_timeframe_minutes,
         now=checked_at,
+        timezone=timezone,
+        mt5_timestamp_timezone=mt5_timestamp_timezone or timezone,
         ok_age_minutes=ok_age_minutes,
         warning_age_minutes=warning_age_minutes,
         closed_market_max_age_minutes=closed_market_max_age_minutes,
@@ -114,16 +118,19 @@ def analyze_dataframe_freshness(
     ok_age_minutes: float = 30.0,
     warning_age_minutes: float = 90.0,
     closed_market_max_age_minutes: float = 3 * 24 * 60.0,
+    timezone: str = "Europe/Rome",
+    mt5_timestamp_timezone: str | None = None,
 ) -> DataFreshnessReport:
     """Calculate freshness diagnostics for an already loaded OHLCV frame."""
-    checked_at = normalize_now(now)
+    checked_at = normalize_now(now, timezone)
     csv_path = Path(path)
     if data is None or data.empty:
         return error_report(symbol, csv_path, checked_at, "data empty")
     if not isinstance(data.index, pd.DatetimeIndex):
         return error_report(symbol, csv_path, checked_at, "data index is not datetime")
 
-    index = pd.DatetimeIndex(pd.to_datetime(data.index, errors="coerce")).dropna().sort_values()
+    source_timezone = mt5_timestamp_timezone or timezone
+    index = to_utc_index(data.index, source_timezone=source_timezone).sort_values()
     if index.empty:
         return error_report(symbol, csv_path, checked_at, "timestamp invalid")
 
@@ -135,7 +142,7 @@ def analyze_dataframe_freshness(
     if timeframe_minutes <= 0:
         timeframe_minutes = float(detected_minutes or 0)
     timeframe = format_timeframe(timeframe_minutes)
-    latest = pd.Timestamp(index[-1]).tz_localize(None)
+    latest = pd.Timestamp(index[-1]).tz_convert("UTC")
     age_minutes = max(0.0, (checked_at - latest).total_seconds() / 60.0)
     gaps = find_temporal_gaps(index, timeframe_minutes)
     gap_count = len(gaps)
@@ -278,7 +285,11 @@ def is_market_open(now: pd.Timestamp) -> bool:
     The check intentionally stays simple and local: weekdays are open except
     late Friday through the weekend. It is a safety gate, not a broker calendar.
     """
-    timestamp = pd.Timestamp(now).tz_localize(None)
+    timestamp = pd.Timestamp(now)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize(ZoneInfo("Europe/Rome"))
+    else:
+        timestamp = timestamp.tz_convert(ZoneInfo("Europe/Rome"))
     weekday = int(timestamp.weekday())
     hour = int(timestamp.hour)
     if weekday == 5:
@@ -344,13 +355,8 @@ def format_freshness_detail(report: DataFreshnessReport) -> str:
 
 
 def normalize_now(now: pd.Timestamp | None = None, timezone: str = "Europe/Rome") -> pd.Timestamp:
-    """Return a timezone-normalized, tz-naive timestamp for comparisons."""
-    if now is None:
-        return pd.Timestamp.now(tz=ZoneInfo(timezone)).tz_localize(None)
-    timestamp = pd.Timestamp(now)
-    if timestamp.tzinfo is not None:
-        timestamp = timestamp.tz_convert(timezone).tz_localize(None)
-    return timestamp
+    """Return a UTC-aware timestamp after interpreting naive values as local/MT5 time."""
+    return now_utc(now, local_timezone=timezone)
 
 
 def error_report(symbol: str, path: Path, checked_at: pd.Timestamp, message: str) -> DataFreshnessReport:

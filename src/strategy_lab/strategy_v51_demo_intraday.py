@@ -19,6 +19,7 @@ import yaml
 from src.strategy.rules import StrategyConfig, calculate_trade_levels
 from src.strategy.signals import TradingSignal
 from src.strategy_lab import strategy_v50_pine
+from src.utils.time_alignment import normalize_timezone_name
 
 
 STRATEGY_NAME = "demo_intraday_candidate"
@@ -66,6 +67,7 @@ class V51DemoIntradayConfig:
     strategy_name: str
     symbol: str
     timeframe: str
+    mt5_timestamp_timezone: str
     demo_only: bool
     allow_real_live: bool
     allow_demo_execution: bool
@@ -136,6 +138,7 @@ def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntrad
         strategy_name=str(raw.get("strategy_name", STRATEGY_NAME)),
         symbol=str(raw.get("symbol", "XAUUSD")),
         timeframe=str(raw.get("timeframe", "15m")),
+        mt5_timestamp_timezone=str(raw.get("mt5_timestamp_timezone", "Europe/Rome")),
         demo_only=_as_bool(raw.get("demo_only", True)),
         allow_real_live=_as_bool(raw.get("allow_real_live", False)),
         allow_demo_execution=_as_bool(raw.get("allow_demo_execution", False)),
@@ -185,6 +188,10 @@ def validate_v51_config(config: V51DemoIntradayConfig) -> None:
     """Validate V51 operational and demo safety invariants."""
     if config.strategy_name != STRATEGY_NAME:
         raise ValueError(f"strategy_name must be {STRATEGY_NAME}")
+    try:
+        normalize_timezone_name(config.mt5_timestamp_timezone)
+    except Exception as exc:
+        raise ValueError(f"invalid mt5_timestamp_timezone: {config.mt5_timestamp_timezone}") from exc
     if not config.demo_only:
         raise PermissionError("V51 requires demo_only=true")
     if config.allow_real_live:

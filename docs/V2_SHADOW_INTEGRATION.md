@@ -26,6 +26,13 @@ and write shadow artifacts under `reports/shadow/`. They do not submit orders,
 modify positions, call broker APIs, change V1 guardrails, or authorize/block
 live trades. Macro, news, SMC, and AI output are advisory diagnostics only.
 
+## Time Alignment
+
+V51 execution time alignment is handled in the V1 layer, documented in
+`docs/TIME_ALIGNMENT.md`. V2 shadow may read already-produced V1 CSV/log data,
+but it does not participate in candidate freshness, order authorization, or
+broker-time normalization.
+
 ## Run
 
 ```bash

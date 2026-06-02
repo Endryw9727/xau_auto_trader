@@ -1,6 +1,7 @@
 strategy_name: demo_intraday_candidate
 symbol: XAUUSD-P
 timeframe: 15m
+mt5_timestamp_timezone: Europe/Rome
 
 demo_only: true
 allow_real_live: false

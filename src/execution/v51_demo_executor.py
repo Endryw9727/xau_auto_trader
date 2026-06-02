@@ -7,9 +7,10 @@ It never enables real live trading and records V51-specific execution logs.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC
 from pathlib import Path
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -19,6 +20,14 @@ from src.strategy_lab.strategy_v51_demo_intraday import (
     V51DemoIntradayConfig,
     build_demo_intraday_decision_log,
     load_v51_config,
+)
+from src.utils.time_alignment import (
+    DEFAULT_MT5_TIMESTAMP_TIMEZONE,
+    align_timestamp,
+    latest_closed_from_index,
+    now_utc as aligned_now_utc,
+    raw_timestamp_text,
+    to_utc_timestamp,
 )
 
 
@@ -65,9 +74,14 @@ V51_DEMO_LOG_COLUMNS = [
     "side",
     "now_utc",
     "now_local",
+    "mt5_timestamp_timezone",
     "candidate_age_minutes",
     "latest_closed_candle_time",
+    "latest_closed_candle_time_raw",
+    "latest_closed_candle_time_utc",
     "selected_candidate_time",
+    "selected_candidate_time_raw",
+    "selected_candidate_time_utc",
     "candidate_time_basis",
     "time_alignment_status",
     "live_candidate_window_minutes",
@@ -135,9 +149,14 @@ class V51DemoExecutionResult:
     mt5_deal: int | None = None
     now_utc: pd.Timestamp | None = None
     now_local: str | None = None
+    mt5_timestamp_timezone: str | None = None
     candidate_age_minutes: float | None = None
     latest_closed_candle_time: pd.Timestamp | None = None
+    latest_closed_candle_time_raw: str | None = None
+    latest_closed_candle_time_utc: pd.Timestamp | None = None
     selected_candidate_time: pd.Timestamp | None = None
+    selected_candidate_time_raw: str | None = None
+    selected_candidate_time_utc: pd.Timestamp | None = None
     candidate_time_basis: str | None = None
     time_alignment_status: str | None = None
     live_candidate_window_minutes: int | None = None
@@ -206,9 +225,9 @@ def run_v51_demo_execution_once(
 ) -> V51DemoExecutionResult:
     """Run one gated V51 demo execution attempt."""
     config = load_v51_config(config_path)
-    now = _utc_now(now)
+    now = _utc_now(now, config)
     mtf_audit = load_mtf_audit_context(config, mtf_context_summary_path)
-    no_candidate_telemetry = _no_candidate_telemetry(now, mtf_audit)
+    no_candidate_telemetry = _no_candidate_telemetry(now, mtf_audit, config=config)
     gate_error = _validate_execution_gates(config)
     if gate_error is not None:
         result = _result(False, "REJECTED", gate_error, dry_run=dry_run, telemetry=no_candidate_telemetry)
@@ -259,8 +278,18 @@ def run_v51_demo_execution_once(
             )
             append_v51_demo_log(output_dir, result, event="no_trade")
             return result
-        latest_closed_candle_time = _latest_closed_candle_time(rates)
-        no_candidate_telemetry = _no_candidate_telemetry(now, mtf_audit, latest_closed_candle_time=latest_closed_candle_time)
+        try:
+            latest_closed_candle_time = _latest_closed_candle_time(rates, config, now=now)
+        except ValueError as exc:
+            result = _result(False, "NO_TRADE", str(exc), dry_run=dry_run, telemetry=no_candidate_telemetry)
+            append_v51_demo_log(output_dir, result, event="no_trade")
+            return result
+        no_candidate_telemetry = _no_candidate_telemetry(
+            now,
+            mtf_audit,
+            config=config,
+            latest_closed_candle_time=latest_closed_candle_time,
+        )
         stale_reason = _stale_data_reason(rates, config, now)
         if stale_reason is not None:
             result = _result(False, "NO_TRADE", stale_reason, dry_run=dry_run, telemetry=no_candidate_telemetry)
@@ -398,6 +427,7 @@ def run_v51_demo_execution_once(
                     latest_closed_candle_time=latest_closed_candle_time,
                     candidate=candidate,
                     status=time_guard_reason,
+                    config=config,
                 ),
             }
             result = _result(False, "NO_TRADE", time_guard_reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
@@ -413,6 +443,7 @@ def run_v51_demo_execution_once(
                     latest_closed_candle_time=latest_closed_candle_time,
                     candidate=candidate,
                     status=stale_candidate_reason,
+                    config=config,
                 ),
             }
             result = _result(False, "NO_TRADE", stale_candidate_reason, dry_run=dry_run, candidate=candidate, telemetry=telemetry)
@@ -530,7 +561,7 @@ def build_v51_demo_status(
 ) -> dict[str, Any]:
     """Return a read-only V51 demo execution status snapshot."""
     config = load_v51_config(config_path)
-    now = _utc_now(now)
+    now = _utc_now(now, config)
     mt5 = mt5_module or import_mt5_module()
     status = {
         "symbol": config.symbol,
@@ -625,8 +656,9 @@ def select_best_v51_candidate(
     if log.empty:
         return None, "no V51 closed-candle decisions were produced"
 
-    log["candle_time_dt"] = pd.to_datetime(log["candle_time"], errors="coerce", utc=True)
-    latest_day = _utc_timestamp(market_data.index[-1]).normalize()
+    log["candle_time_raw"] = log["candle_time"].apply(raw_timestamp_text)
+    log["candle_time_dt"] = _utc_series(log["candle_time"], config)
+    latest_day = _utc_timestamp(market_data.index[-1], config).normalize()
     latest_log = log[log["candle_time_dt"].dt.normalize() == latest_day].tail(config.selection_lookback_candles).copy()
     if latest_log.empty:
         return None, "no V51 candidates on latest MT5 trading day"
@@ -811,11 +843,20 @@ def append_v51_demo_log(
         "side": result.side,
         "now_utc": result.now_utc.isoformat() if result.now_utc is not None else None,
         "now_local": result.now_local,
+        "mt5_timestamp_timezone": result.mt5_timestamp_timezone,
         "candidate_age_minutes": result.candidate_age_minutes,
         "latest_closed_candle_time": result.latest_closed_candle_time.isoformat()
         if result.latest_closed_candle_time is not None
         else None,
+        "latest_closed_candle_time_raw": result.latest_closed_candle_time_raw,
+        "latest_closed_candle_time_utc": result.latest_closed_candle_time_utc.isoformat()
+        if result.latest_closed_candle_time_utc is not None
+        else None,
         "selected_candidate_time": result.selected_candidate_time.isoformat() if result.selected_candidate_time is not None else None,
+        "selected_candidate_time_raw": result.selected_candidate_time_raw,
+        "selected_candidate_time_utc": result.selected_candidate_time_utc.isoformat()
+        if result.selected_candidate_time_utc is not None
+        else None,
         "candidate_time_basis": result.candidate_time_basis,
         "time_alignment_status": result.time_alignment_status,
         "live_candidate_window_minutes": result.live_candidate_window_minutes,
@@ -1069,9 +1110,14 @@ def _result(
         side=candidate.side if candidate is not None else side,
         now_utc=telemetry.get("now_utc"),
         now_local=telemetry.get("now_local"),
+        mt5_timestamp_timezone=telemetry.get("mt5_timestamp_timezone"),
         candidate_age_minutes=telemetry.get("candidate_age_minutes"),
         latest_closed_candle_time=telemetry.get("latest_closed_candle_time"),
+        latest_closed_candle_time_raw=telemetry.get("latest_closed_candle_time_raw"),
+        latest_closed_candle_time_utc=telemetry.get("latest_closed_candle_time_utc"),
         selected_candidate_time=telemetry.get("selected_candidate_time"),
+        selected_candidate_time_raw=telemetry.get("selected_candidate_time_raw"),
+        selected_candidate_time_utc=telemetry.get("selected_candidate_time_utc"),
         candidate_time_basis=telemetry.get("candidate_time_basis"),
         time_alignment_status=telemetry.get("time_alignment_status"),
         live_candidate_window_minutes=telemetry.get("live_candidate_window_minutes"),
@@ -1098,9 +1144,18 @@ def _result(
     )
 
 
-def _latest_closed_candle_time(data: pd.DataFrame) -> pd.Timestamp:
-    latest = pd.Timestamp(data.index[-1])
-    return latest.tz_localize(UTC) if latest.tzinfo is None else latest.tz_convert(UTC)
+def _latest_closed_candle_time(
+    data: pd.DataFrame,
+    config: V51DemoIntradayConfig,
+    *,
+    now: pd.Timestamp | None = None,
+) -> pd.Timestamp:
+    return latest_closed_from_index(
+        data.index,
+        source_timezone=_mt5_timestamp_timezone(config),
+        now=now,
+        timeframe_minutes=_timeframe_minutes(config.timeframe),
+    )
 
 
 def _market_telemetry(
@@ -1131,10 +1186,11 @@ def _selection_telemetry(
     telemetry.update(
         {
             **_time_alignment_telemetry(
-                _utc_now(now),
+                _utc_now(now, config),
                 latest_closed_candle_time=latest_closed_candle_time,
                 candidate=None,
                 status="no_v51_candidate_to_filter",
+                config=config,
             ),
             "latest_closed_candle_time": latest_closed_candle_time,
             "live_candidate_window_minutes": config.live_candidate_window_minutes,
@@ -1167,13 +1223,14 @@ def _candidate_telemetry(
     telemetry.update(
         {
             **_time_alignment_telemetry(
-                _utc_now(now),
+                _utc_now(now, config),
                 latest_closed_candle_time=latest_closed_candle_time,
                 candidate=candidate,
                 status="OK",
+                config=config,
             ),
-            "candidate_age_minutes": _candidate_age_minutes(candidate, latest_closed_candle_time),
-            "selected_candidate_time": _utc_timestamp(candidate.candle_time),
+            "candidate_age_minutes": _candidate_age_minutes(candidate, latest_closed_candle_time, config),
+            "selected_candidate_time": _utc_timestamp(candidate.candle_time, config),
             "expected_entry_price": candidate.entry_price,
             "slippage_points": slippage_points,
             "session": candidate.session,
@@ -1184,9 +1241,13 @@ def _candidate_telemetry(
     return telemetry
 
 
-def _candidate_age_minutes(candidate: V51DemoCandidate, latest_closed_candle_time: pd.Timestamp) -> float:
-    candidate_time = _utc_timestamp(candidate.candle_time)
-    latest_time = _utc_timestamp(latest_closed_candle_time)
+def _candidate_age_minutes(
+    candidate: V51DemoCandidate,
+    latest_closed_candle_time: pd.Timestamp,
+    config: V51DemoIntradayConfig,
+) -> float:
+    candidate_time = _utc_timestamp(candidate.candle_time, config)
+    latest_time = _utc_timestamp(latest_closed_candle_time, config)
     return (latest_time - candidate_time).total_seconds() / 60.0
 
 
@@ -1196,19 +1257,29 @@ def _time_alignment_telemetry(
     latest_closed_candle_time: pd.Timestamp | None,
     candidate: V51DemoCandidate | None,
     status: str,
+    config: V51DemoIntradayConfig,
 ) -> dict[str, Any]:
-    latest_time = _utc_timestamp(latest_closed_candle_time) if latest_closed_candle_time is not None else None
-    candidate_time = _utc_timestamp(candidate.candle_time) if candidate is not None else None
+    timezone = _mt5_timestamp_timezone(config)
+    now_value = _utc_now(now, config)
+    latest_snapshot = align_timestamp(latest_closed_candle_time, source_timezone=timezone)
+    candidate_snapshot = align_timestamp(candidate.candle_time, source_timezone=timezone) if candidate is not None else None
+    latest_time = latest_snapshot.utc
+    candidate_time = candidate_snapshot.utc if candidate_snapshot is not None else None
     age = None
     if latest_time is not None and candidate_time is not None:
         age = (latest_time - candidate_time).total_seconds() / 60.0
     return {
-        "now_utc": _utc_now(now),
-        "now_local": _local_time_string(now),
+        "now_utc": now_value,
+        "now_local": _local_time_string(now_value, timezone),
+        "mt5_timestamp_timezone": timezone,
         "latest_closed_candle_time": latest_time,
+        "latest_closed_candle_time_raw": latest_snapshot.raw,
+        "latest_closed_candle_time_utc": latest_time,
         "selected_candidate_time": candidate_time,
+        "selected_candidate_time_raw": candidate_snapshot.raw if candidate_snapshot is not None else None,
+        "selected_candidate_time_utc": candidate_time,
         "candidate_age_minutes": age,
-        "candidate_time_basis": "mt5_closed_candle_utc",
+        "candidate_time_basis": f"mt5_csv_naive_{timezone}_to_utc",
         "time_alignment_status": status,
     }
 
@@ -1217,6 +1288,7 @@ def _no_candidate_telemetry(
     now: pd.Timestamp,
     mtf_audit: MTFAuditContext,
     *,
+    config: V51DemoIntradayConfig,
     latest_closed_candle_time: pd.Timestamp | None = None,
 ) -> dict[str, Any]:
     return {
@@ -1225,6 +1297,7 @@ def _no_candidate_telemetry(
             latest_closed_candle_time=latest_closed_candle_time,
             candidate=None,
             status="no_v51_candidate_to_filter",
+            config=config,
         ),
         **_mtf_audit_telemetry(
             mtf_audit,
@@ -1234,10 +1307,9 @@ def _no_candidate_telemetry(
     }
 
 
-def _local_time_string(now: pd.Timestamp) -> str:
-    value = _utc_now(now)
-    local_tz = datetime.now().astimezone().tzinfo
-    return value.tz_convert(local_tz).isoformat()
+def _local_time_string(now: pd.Timestamp, timezone: str) -> str:
+    value = _utc_now(now, timezone)
+    return value.tz_convert(ZoneInfo(timezone)).isoformat()
 
 
 def _candidate_time_guard_reason(
@@ -1246,8 +1318,8 @@ def _candidate_time_guard_reason(
     latest_closed_candle_time: pd.Timestamp,
     now: pd.Timestamp,
 ) -> str | None:
-    age_minutes = _candidate_age_minutes(candidate, latest_closed_candle_time)
-    now_delta_minutes = (_utc_timestamp(candidate.candle_time) - _utc_now(now)).total_seconds() / 60.0
+    age_minutes = _candidate_age_minutes(candidate, latest_closed_candle_time, config)
+    now_delta_minutes = (_utc_timestamp(candidate.candle_time, config) - _utc_now(now, config)).total_seconds() / 60.0
     if now_delta_minutes > FUTURE_CANDIDATE_TOLERANCE_MINUTES:
         return "candidate_time_in_future"
     if age_minutes < -FUTURE_CANDIDATE_TOLERANCE_MINUTES:
@@ -1264,8 +1336,8 @@ def _candidate_stale_reason(
 ) -> str | None:
     if not config.candidate_freshness_required:
         return None
-    age_minutes = _candidate_age_minutes(candidate, latest_closed_candle_time)
-    if _utc_timestamp(candidate.candle_time) == _utc_timestamp(latest_closed_candle_time):
+    age_minutes = _candidate_age_minutes(candidate, latest_closed_candle_time, config)
+    if _utc_timestamp(candidate.candle_time, config) == _utc_timestamp(latest_closed_candle_time, config):
         return None
     if 0 <= age_minutes <= config.max_candidate_age_minutes:
         return None
@@ -1277,8 +1349,8 @@ def _filter_live_candidate_window(
     config: V51DemoIntradayConfig,
     latest_closed_candle_time: pd.Timestamp,
 ) -> pd.DataFrame:
-    latest_time = _utc_timestamp(latest_closed_candle_time)
-    candidate_times = pd.to_datetime(log["candle_time_dt"], errors="coerce", utc=True)
+    latest_time = _utc_timestamp(latest_closed_candle_time, config)
+    candidate_times = _utc_series(log["candle_time_dt"], config)
     if config.require_latest_closed_candle_candidate:
         mask = candidate_times == latest_time
     else:
@@ -1294,8 +1366,8 @@ def _live_selection_reason(
 ) -> str:
     if latest_closed_candle_time is None:
         return "V51 candidate selected"
-    latest_time = _utc_timestamp(latest_closed_candle_time)
-    selected_time = _utc_timestamp(candidate_time)
+    latest_time = _utc_timestamp(latest_closed_candle_time, config)
+    selected_time = _utc_timestamp(candidate_time, config)
     if selected_time == latest_time:
         return "V51 live candidate selected on latest closed candle"
     age_minutes = (latest_time - selected_time).total_seconds() / 60.0
@@ -1342,8 +1414,8 @@ def _rejected_signal_cooldown_reason(
 def _stale_data_reason(data: pd.DataFrame, config: V51DemoIntradayConfig, now: pd.Timestamp) -> str | None:
     if data.empty:
         return "MT5 returned no closed candles"
-    latest = _latest_closed_candle_time(data)
-    age_minutes = (now - latest).total_seconds() / 60.0
+    latest = _latest_closed_candle_time(data, config, now=now)
+    age_minutes = (_utc_now(now, config) - latest).total_seconds() / 60.0
     if age_minutes > config.max_data_age_minutes:
         return f"MT5 data stale: latest closed candle is {age_minutes:.1f} minutes old"
     return None
@@ -1546,16 +1618,51 @@ def _append_csv(path: Path, row: dict[str, Any], columns: list[str]) -> None:
     pd.DataFrame([row], columns=columns).to_csv(path, mode="a", header=header, index=False)
 
 
-def _utc_now(now: pd.Timestamp | None) -> pd.Timestamp:
-    if now is None:
-        return pd.Timestamp.now(tz=UTC)
-    value = pd.Timestamp(now)
-    return value.tz_localize(UTC) if value.tzinfo is None else value.tz_convert(UTC)
+def _utc_now(
+    now: pd.Timestamp | None,
+    config_or_timezone: V51DemoIntradayConfig | str | None = None,
+) -> pd.Timestamp:
+    return aligned_now_utc(now, local_timezone=_timezone_from_config_or_name(config_or_timezone))
 
 
-def _utc_timestamp(value: Any) -> pd.Timestamp:
-    timestamp = pd.Timestamp(value)
-    return timestamp.tz_localize(UTC) if timestamp.tzinfo is None else timestamp.tz_convert(UTC)
+def _utc_timestamp(
+    value: Any,
+    config_or_timezone: V51DemoIntradayConfig | str | None = None,
+) -> pd.Timestamp:
+    timestamp = to_utc_timestamp(value, source_timezone=_timezone_from_config_or_name(config_or_timezone))
+    if timestamp is None:
+        raise ValueError("timestamp is missing")
+    return timestamp
+
+
+def _utc_series(values: Any, config_or_timezone: V51DemoIntradayConfig | str | None = None) -> pd.Series:
+    timezone = _timezone_from_config_or_name(config_or_timezone)
+    return pd.Series(
+        [to_utc_timestamp(value, source_timezone=timezone) for value in values],
+        index=getattr(values, "index", None),
+        dtype="datetime64[ns, UTC]",
+    )
+
+
+def _timezone_from_config_or_name(config_or_timezone: V51DemoIntradayConfig | str | None) -> str:
+    if isinstance(config_or_timezone, V51DemoIntradayConfig):
+        return _mt5_timestamp_timezone(config_or_timezone)
+    if isinstance(config_or_timezone, str) and config_or_timezone:
+        return config_or_timezone
+    return DEFAULT_MT5_TIMESTAMP_TIMEZONE
+
+
+def _mt5_timestamp_timezone(config: V51DemoIntradayConfig) -> str:
+    return str(getattr(config, "mt5_timestamp_timezone", DEFAULT_MT5_TIMESTAMP_TIMEZONE) or DEFAULT_MT5_TIMESTAMP_TIMEZONE)
+
+
+def _timeframe_minutes(timeframe: str) -> float:
+    value = str(timeframe).strip().lower()
+    if value.endswith("m"):
+        return float(value[:-1] or 15)
+    if value.endswith("h"):
+        return float(value[:-1] or 1) * 60.0
+    return 15.0
 
 
 def _last_error(mt5: Any) -> Any:
