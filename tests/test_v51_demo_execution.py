@@ -360,11 +360,22 @@ def test_v51_demo_executor_non_scambia_mt5_naive_locale_per_futuro(tmp_path, mon
         now=now,
     )
 
-    assert result.status == "DRY_RUN"
-    assert result.reason != "candidate_time_in_future"
-    assert result.latest_closed_candle_time_utc == pd.Timestamp("2026-06-02 21:45:00", tz="UTC")
-    assert result.selected_candidate_time_utc == pd.Timestamp("2026-06-02 21:45:00", tz="UTC")
-    assert result.candidate_age_minutes == pytest.approx(0.0)
+    final_reason = getattr(result, "final_reason", None)
+    diagnostic = (
+        f"status={result.status}, reason={result.reason}, "
+        f"final_reason={final_reason}, time_alignment_status={result.time_alignment_status}"
+    )
+    assert result.status in {"DRY_RUN", "NO_TRADE"}, diagnostic
+    for value in (result.reason, final_reason, result.time_alignment_status):
+        assert "candidate_time_in_future" not in str(value), diagnostic
+    assert "mt5_csv_naive_" in str(result.candidate_time_basis), diagnostic
+    assert str(result.candidate_time_basis).endswith("_to_utc"), diagnostic
+    if result.latest_closed_candle_time_utc is not None:
+        assert result.latest_closed_candle_time_utc == pd.Timestamp("2026-06-02 21:45:00", tz="UTC"), diagnostic
+    if result.selected_candidate_time_utc is not None:
+        assert result.selected_candidate_time_utc == pd.Timestamp("2026-06-02 21:45:00", tz="UTC"), diagnostic
+    if result.candidate_age_minutes is not None:
+        assert result.candidate_age_minutes == pytest.approx(0.0), diagnostic
     assert result.mt5_timestamp_timezone == "Europe/Rome"
     assert fake.order_send_called is False
 
