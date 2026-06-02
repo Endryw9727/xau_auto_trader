@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trader-config
+  namespace: xau-trader
+data:
+  config.yaml: |
+    trading:
+      symbol: "XAUUSD"
+      live_mode: false
+      base_timeframe: "15m"
+    strategy:
+      atr_multiplier_sl: 1.5
+      atr_multiplier_tp: 3.0
+    risk:
+      risk_per_trade: 0.005
+      max_risk_per_trade: 0.01
+      max_daily_loss: 0.02
+      max_open_trades: 2
+    macro:
+      enabled: true
+    news:
+      enabled: true
+    ai_reasoning:
+      enabled: true
+    smart_money:
+      enabled: true

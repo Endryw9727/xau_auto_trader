@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xau-trader
+  labels:
+    name: xau-trader
+    environment: production

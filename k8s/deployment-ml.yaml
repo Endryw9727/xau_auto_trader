@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xau-ml-trainer
+  namespace: xau-trader
+  labels:
+    app: xau-ml-trainer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: xau-ml-trainer
+  template:
+    metadata:
+      labels:
+        app: xau-ml-trainer
+    spec:
+      containers:
+      - name: ml
+        image: xau-auto-trader:v2
+        command: ["python", "scripts/run_continuous_ml.py"]
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+        - name: secrets
+          mountPath: /app/.env
+          subPath: .env
+        - name: data
+          mountPath: /app/data
+        - name: reports
+          mountPath: /app/reports
+      volumes:
+      - name: config
+        configMap:
+          name: trader-config
+      - name: secrets
+        secret:
+          secretName: trader-secrets
+      - name: data
+        persistentVolumeClaim:
+          claimName: trader-data-pvc
+      - name: reports
+        persistentVolumeClaim:
+          claimName: trader-reports-pvc
+      restartPolicy: Always

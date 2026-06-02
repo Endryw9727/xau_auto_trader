@@ -1,0 +1,133 @@
+version: "3.8"
+
+services:
+  # Main trading bot
+  bot:
+    build: .
+    container_name: xau_auto_trader_bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=UTC
+    networks:
+      - trader_network
+    depends_on:
+      - db
+    command: python -m src.main
+
+  # Paper trading engine (continuous)
+  paper_trader:
+    build: .
+    container_name: xau_auto_trader_paper
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=UTC
+    networks:
+      - trader_network
+    depends_on:
+      - db
+    command: python scripts/run_paper_trading_continuous.py
+
+  # ML continuous training
+  ml_trainer:
+    build: .
+    container_name: xau_auto_trader_ml
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./data/models:/app/data/models
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=UTC
+    networks:
+      - trader_network
+    depends_on:
+      - db
+    command: python scripts/run_continuous_ml.py
+
+  # Dashboard
+  dashboard:
+    build: .
+    container_name: xau_auto_trader_dashboard
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=UTC
+    networks:
+      - trader_network
+    depends_on:
+      - db
+    command: streamlit run src/dashboard/dashboard_v2.py --server.address=0.0.0.0
+
+  # SQLite database (shared volume)
+  db:
+    image: alpine:latest
+    container_name: xau_auto_trader_db
+    volumes:
+      - db_data:/app/data/database
+    networks:
+      - trader_network
+    command: echo "Database volume ready"
+
+  # Telegram bot notifier
+  telegram_bot:
+    build: .
+    container_name: xau_auto_trader_telegram
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=UTC
+    networks:
+      - trader_network
+    depends_on:
+      - db
+    command: python scripts/run_telegram_notifier.py
+
+  # Cron job scheduler for periodic tasks
+  scheduler:
+    build: .
+    container_name: xau_auto_trader_scheduler
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./.env:/app/.env:ro
+      - ./cron:/app/cron:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=UTC
+    networks:
+      - trader_network
+    depends_on:
+      - db
+    command: crond -f -l 8
+
+volumes:
+  db_data:
+
+networks:
+  trader_network:
+    driver: bridge

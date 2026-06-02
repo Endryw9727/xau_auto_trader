@@ -1,0 +1,1 @@
+"""Run strategy lab comparison."""

@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: xau-daily-backup
+  namespace: xau-trader
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: xau-auto-trader:v2
+            command: ["python", "-c", "import shutil; shutil.make_archive('/app/reports/backup/daily', 'zip', '/app/reports')"]
+            volumeMounts:
+            - name: reports
+              mountPath: /app/reports
+          volumes:
+          - name: reports
+            persistentVolumeClaim:
+              claimName: trader-reports-pvc
+          restartPolicy: OnFailure
