@@ -172,6 +172,83 @@ def recent_decision_log(*, latest_has_candidate: bool = True, include_future: bo
     return pd.DataFrame(rows)
 
 
+def detailed_shadow_decision_log() -> pd.DataFrame:
+    base = {
+        "signal_id": "V51-202606030215-BUY",
+        "candle_time": "2026-06-03T02:15:00",
+        "session": "NEW YORK",
+        "side": "BUY",
+        "decision": "REJECTED",
+        "score": 82.0,
+        "score_gap": 22.0,
+        "entry_price": 2400.0,
+        "stop_loss": 2398.8,
+        "take_profit": 2401.5,
+        "risk_reward": 1.25,
+        "lot_size": 0.01,
+        "spread_cost": 0.0,
+        "slippage_estimate": 0.1,
+        "reason": "BUY quality guard blocked",
+        "v50_trend4_long": False,
+        "v50_soft4_long": False,
+        "v50_mom1_long": False,
+        "v50_strong1_long": False,
+        "v50_trend4_short": True,
+        "v50_soft4_short": True,
+        "v50_mom1_short": True,
+        "v50_strong1_short": False,
+        "v50_struct15_long": False,
+        "v50_struct15_short": True,
+        "v50_trigger5_long": False,
+        "v50_trigger10_long": True,
+        "v50_sweep_long": True,
+        "v50_bos_long": False,
+        "v50_above_value": True,
+        "v50_in_session": True,
+        "v50_volume_ok": True,
+        "v50_quality_long_ok": False,
+        "v50_quality_short_ok": True,
+        "v50_15m_close": 2398.0,
+        "v50_15m_ema50": 2400.0,
+        "v50_candle_body": 1.0,
+        "v50_atr": 1.5,
+        "v50_adx": 22.0,
+        "Close": 2401.0,
+        "v50_ema21": 2400.0,
+        "v50_ema50": 2399.0,
+    }
+    return pd.DataFrame([base])
+
+
+def session_blocked_decision_log() -> pd.DataFrame:
+    rows = []
+    for idx, session in enumerate(["ASIA", "ASIA/LONDON", "FX CLOSED"]):
+        rows.append(
+            {
+                "signal_id": f"V51-202606030{idx}00-SELL",
+                "candle_time": f"2026-06-03T0{idx}:00:00",
+                "session": session,
+                "side": "SELL",
+                "decision": "REJECTED",
+                "score": 76.0,
+                "score_gap": 18.0,
+                "entry_price": 2400.0,
+                "stop_loss": 2401.2,
+                "take_profit": 2398.5,
+                "risk_reward": 1.25,
+                "lot_size": 0.01,
+                "spread_cost": 0.0,
+                "slippage_estimate": 0.1,
+                "reason": f"session blocked: {session}",
+                "v50_sweep_short": session == "ASIA",
+                "v50_sweep_long": session == "ASIA/LONDON",
+                "v50_chop_block": session == "FX CLOSED",
+                "v50_adx": 12.0 if session == "FX CLOSED" else 20.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def test_v51_diagnostic_report_crea_report_con_dati_validi(tmp_path, monkeypatch):
     csv_path = write_ohlcv_csv(tmp_path / "xauusd.csv")
     monkeypatch.setattr(diagnostic, "build_demo_intraday_decision_log", lambda *_args, **_kwargs: sample_decision_log())
@@ -286,3 +363,68 @@ def test_v51_live_candidate_probe_non_accetta_candidate_futuro(tmp_path, monkeyp
     assert str(row["selected_candidate_time"]) in {"", "nan"}
     assert "V51-202606030230" in row["nearest_candidate_after_latest"]
     assert "diagnostic only, never tradable" in result.probe_latest_path.read_text(encoding="utf-8")
+
+
+def test_v51_rejected_score_alto_quality_guard_reason_dettagliata(tmp_path, monkeypatch):
+    csv_path = write_ohlcv_csv_until(tmp_path / "xauusd.csv", "2026-06-03 02:15:00")
+    monkeypatch.setattr(diagnostic, "build_demo_intraday_decision_log", lambda *_args, **_kwargs: detailed_shadow_decision_log())
+
+    result = diagnostic.run_v51_diagnostic_report(csv_path=csv_path, output_dir=tmp_path / "diagnostics", candles=200)
+
+    row = pd.read_csv(result.rejections_path).iloc[0]
+    latest_text = result.latest_path.read_text(encoding="utf-8")
+    assert row["setup_score"] == 82.0
+    assert row["context_bias"] == "BEAR"
+    assert row["quality_guard_decision"] == "BLOCKED"
+    assert row["execution_decision"] == "REJECTED"
+    assert row["final_reason"] == "BUY quality guard blocked"
+    assert row["guard_category"] == "setup_quality"
+    assert "htf=" in row["score_breakdown"]
+    assert "HTF bias direction=BEAR" in row["quality_guard_detail"]
+    assert "candidate side=BUY" in row["quality_guard_detail"]
+    assert "countertrend=True" in row["quality_guard_detail"]
+    assert "M15 state=BEAR" in row["quality_guard_detail"]
+    assert "High-score rejected candidates" in latest_text
+
+
+def test_v51_asia_shadow_classification_report_only(tmp_path, monkeypatch):
+    csv_path = write_ohlcv_csv_until(tmp_path / "xauusd.csv", "2026-06-03 02:15:00")
+    monkeypatch.setattr(diagnostic, "build_demo_intraday_decision_log", lambda *_args, **_kwargs: session_blocked_decision_log())
+
+    result = diagnostic.run_v51_diagnostic_report(csv_path=csv_path, output_dir=tmp_path / "diagnostics", candles=200)
+
+    rejections = pd.read_csv(result.rejections_path)
+    asia = rejections[rejections["session"] == "ASIA"].iloc[0]
+    asia_london = rejections[rejections["session"] == "ASIA/LONDON"].iloc[0]
+    session_text = result.session_behavior_latest_path.read_text(encoding="utf-8")
+    assert asia["asia_shadow_classification"] == "ASIA_LIQUIDITY_ABOVE"
+    assert asia_london["asia_shadow_classification"] == "ASIA_LIQUIDITY_BELOW"
+    assert asia["asia_execution_mode"] == "SHADOW_ONLY"
+    assert "Asia execution mode: SHADOW_ONLY" in session_text
+    assert "diagnostics only" in session_text.lower()
+
+
+def test_v51_session_blocked_distingue_asia_asia_london_fx_closed(tmp_path, monkeypatch):
+    csv_path = write_ohlcv_csv_until(tmp_path / "xauusd.csv", "2026-06-03 02:15:00")
+    monkeypatch.setattr(diagnostic, "build_demo_intraday_decision_log", lambda *_args, **_kwargs: session_blocked_decision_log())
+
+    result = diagnostic.run_v51_diagnostic_report(csv_path=csv_path, output_dir=tmp_path / "diagnostics", candles=200)
+
+    rejections = pd.read_csv(result.rejections_path)
+    reasons = set(rejections["final_reason"].astype(str))
+    session_text = result.session_behavior_latest_path.read_text(encoding="utf-8")
+    assert "session blocked: ASIA" in reasons
+    assert "session blocked: ASIA/LONDON" in reasons
+    assert "session blocked: FX CLOSED" in reasons
+    assert "Session: ASIA" in session_text
+    assert "Session: ASIA/LONDON" in session_text
+    assert "Session: FX CLOSED" in session_text
+
+
+def test_v51_diagnostic_report_non_chiama_broker_execution_live():
+    source = Path("scripts/run_v51_diagnostic_report.py").read_text(encoding="utf-8")
+
+    assert "order_send" not in source
+    assert "run_v51_demo_execution_once" not in source
+    assert "import_mt5_module" not in source
+    assert "positions_get" not in source

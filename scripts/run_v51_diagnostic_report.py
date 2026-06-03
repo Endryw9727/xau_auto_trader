@@ -20,6 +20,7 @@ from src.strategy_lab.strategy_v51_demo_intraday import (
     build_demo_intraday_decision_log,
     load_v51_config,
 )
+from src.strategy_lab import strategy_v50_pine
 from src.utils.time_alignment import align_timestamp, to_utc_timestamp
 
 
@@ -29,6 +30,7 @@ DEFAULT_V51_DIAGNOSTIC_REJECTIONS = "v51_diagnostic_rejections.csv"
 DEFAULT_V51_DIAGNOSTIC_LATEST = "v51_diagnostic_latest.txt"
 DEFAULT_V51_LIVE_CANDIDATE_PROBE = "v51_live_candidate_probe.csv"
 DEFAULT_V51_LIVE_CANDIDATE_PROBE_LATEST = "v51_live_candidate_probe_latest.txt"
+DEFAULT_V51_SESSION_BEHAVIOR_LATEST = "v51_session_behavior_latest.txt"
 DEFAULT_XAUUSD_CSV_PATH = Path("data/raw/xauusd.csv")
 
 SUMMARY_COLUMNS = [
@@ -67,6 +69,25 @@ REJECTION_COLUMNS = [
     "spread_cost",
     "slippage_estimate",
     "reason",
+    "setup_score",
+    "context_bias",
+    "quality_guard_decision",
+    "execution_decision",
+    "final_reason",
+    "guard_category",
+    "score_breakdown",
+    "score_breakdown_total",
+    "high_score_explanation",
+    "htf_bias_direction",
+    "candidate_side",
+    "countertrend",
+    "m15_state",
+    "m5_m1_timing",
+    "sweep_reclaim_present",
+    "displacement_present",
+    "quality_guard_detail",
+    "asia_shadow_classification",
+    "asia_execution_mode",
 ]
 
 PROBE_COLUMNS = [
@@ -101,6 +122,7 @@ class V51DiagnosticReportResult:
     latest_path: Path
     probe_path: Path
     probe_latest_path: Path
+    session_behavior_latest_path: Path
 
 
 def run_v51_diagnostic_report(
@@ -134,6 +156,7 @@ def run_v51_diagnostic_report(
             paths["latest"],
             paths["probe"],
             paths["probe_latest"],
+            paths["session_behavior_latest"],
         )
 
     required_rows = config.warmup_candles + 1
@@ -156,11 +179,14 @@ def run_v51_diagnostic_report(
             paths["latest"],
             paths["probe"],
             paths["probe_latest"],
+            paths["session_behavior_latest"],
         )
 
     working_data = data.tail(config.warmup_candles + candles).copy()
     decision_log = build_demo_intraday_decision_log(working_data, config, enforce_daily_limit=False)
     decision_log = _latest_decisions(decision_log, candles)
+    features = _build_v51_diagnostic_features(working_data)
+    decision_log = enrich_decision_log_for_diagnostics(decision_log, features, config)
     latest_data_time = _latest_data_timestamp(data)
     summary = build_diagnostic_summary(
         decision_log,
@@ -175,12 +201,14 @@ def run_v51_diagnostic_report(
     probe = build_live_candidate_probe(decision_log, config, csv_path=csv_path, rows_loaded=len(data), latest_data_time=latest_data_time)
     latest_text = build_latest_text(summary.iloc[0].to_dict(), decision_log, probe.iloc[0].to_dict())
     probe_latest_text = build_probe_latest_text(probe.iloc[0].to_dict())
+    session_behavior_text = build_session_behavior_latest_text(decision_log)
 
     summary.to_csv(paths["summary"], index=False)
     rejections.to_csv(paths["rejections"], index=False)
     probe.to_csv(paths["probe"], index=False)
     paths["latest"].write_text(latest_text, encoding="utf-8")
     paths["probe_latest"].write_text(probe_latest_text, encoding="utf-8")
+    paths["session_behavior_latest"].write_text(session_behavior_text, encoding="utf-8")
     return V51DiagnosticReportResult(
         "OK",
         "V51 diagnostic report generated",
@@ -189,6 +217,7 @@ def run_v51_diagnostic_report(
         paths["latest"],
         paths["probe"],
         paths["probe_latest"],
+        paths["session_behavior_latest"],
     )
 
 
@@ -243,6 +272,32 @@ def build_rejections_report(decision_log: pd.DataFrame) -> pd.DataFrame:
     return rejected[REJECTION_COLUMNS].reset_index(drop=True)
 
 
+def enrich_decision_log_for_diagnostics(
+    decision_log: pd.DataFrame,
+    features: pd.DataFrame,
+    config: V51DemoIntradayConfig,
+) -> pd.DataFrame:
+    """Add report-only V51 diagnostic columns to a decision log."""
+    if decision_log.empty:
+        return _ensure_diagnostic_columns(decision_log.copy())
+
+    enriched = decision_log.copy()
+    feature_lookup = _feature_lookup_by_time(features)
+    diagnostics: list[dict[str, Any]] = []
+    for _, row in enriched.iterrows():
+        feature_row = _feature_row_for_decision(row, feature_lookup)
+        merged = row.copy()
+        if feature_row is not None:
+            for column, value in feature_row.items():
+                if column not in merged.index:
+                    merged[column] = value
+        diagnostics.append(_diagnostics_for_row(merged, config))
+    diagnostic_frame = pd.DataFrame(diagnostics, index=enriched.index)
+    for column in diagnostic_frame.columns:
+        enriched[column] = diagnostic_frame[column]
+    return _ensure_diagnostic_columns(enriched)
+
+
 def top_rejection_reasons(rejected: pd.DataFrame, *, limit: int = 5) -> str:
     """Format the most frequent rejection reasons."""
     if rejected.empty or "reason" not in rejected.columns:
@@ -281,9 +336,18 @@ def build_latest_text(summary_row: dict[str, Any], decision_log: pd.DataFrame, p
         f"Candidates last 100: {(probe_row or {}).get('candidates_generated_last_100', '')}",
         f"Candidates last 20: {(probe_row or {}).get('candidates_generated_last_20', '')}",
         "",
-        "Last 10 candidates",
+        "High-score rejected candidates (score >= 60)",
         "-" * 72,
     ]
+    high_score_lines = _high_score_rejection_lines(_candidate_rows(decision_log))
+    lines.extend(high_score_lines if high_score_lines else ["No high-score rejected candidates in analyzed window."])
+    lines.extend(
+        [
+            "",
+            "Last 10 candidates",
+            "-" * 72,
+        ]
+    )
     if candidates.empty:
         lines.append("No BUY/SELL candidates found.")
     for _, row in candidates.iterrows():
@@ -292,6 +356,45 @@ def build_latest_text(summary_row: dict[str, Any], decision_log: pd.DataFrame, p
             f"{row['decision']} | score={row['score']} | RR={row['risk_reward']} | reason={row['reason']}"
         )
     lines.append("")
+    lines.append("No orders were sent. This is diagnostics only.")
+    return "\n".join(lines) + "\n"
+
+
+def build_session_behavior_latest_text(decision_log: pd.DataFrame) -> str:
+    """Build per-session candidate behavior diagnostics."""
+    candidates = _candidate_rows(decision_log)
+    lines = [
+        "V51 Session Behavior",
+        "=" * 72,
+        "This is diagnostics only. Asia classifications are shadow context and never direct execution.",
+        "",
+    ]
+    if candidates.empty:
+        lines.append("No BUY/SELL candidates found.")
+        return "\n".join(lines) + "\n"
+
+    for session, group in candidates.groupby(candidates["session"].astype(str), dropna=False):
+        accepted = group[group["decision"] == "ACCEPTED"]
+        rejected = group[group["decision"] != "ACCEPTED"]
+        side_counts = group["side"].astype(str).value_counts()
+        lines.extend(
+            [
+                f"Session: {session}",
+                f"- candidates: {len(group)}",
+                f"- accepted: {len(accepted)}",
+                f"- rejected: {len(rejected)}",
+                f"- avg score: {_mean_numeric(group.get('score')):.2f}",
+                f"- avg RR: {_mean_numeric(group.get('risk_reward')):.2f}",
+                f"- top rejection reasons: {top_rejection_reasons(rejected) or 'n/a'}",
+                f"- BUY/SELL distribution: BUY={int(side_counts.get('BUY', 0))}, SELL={int(side_counts.get('SELL', 0))}",
+            ]
+        )
+        if str(session).upper() in {"ASIA", "ASIA/LONDON"}:
+            classes = group["asia_shadow_classification"].astype(str).value_counts()
+            class_text = ", ".join(f"{name}={count}" for name, count in classes.items() if name and name != "nan")
+            lines.append(f"- Asia shadow classifications: {class_text or 'n/a'}")
+            lines.append("- Asia execution mode: SHADOW_ONLY")
+        lines.append("")
     lines.append("No orders were sent. This is diagnostics only.")
     return "\n".join(lines) + "\n"
 
@@ -389,6 +492,7 @@ def diagnostic_paths(output_dir: str | Path = DEFAULT_V51_DIAGNOSTIC_OUTPUT_DIR)
         "latest": directory / DEFAULT_V51_DIAGNOSTIC_LATEST,
         "probe": directory / DEFAULT_V51_LIVE_CANDIDATE_PROBE,
         "probe_latest": directory / DEFAULT_V51_LIVE_CANDIDATE_PROBE_LATEST,
+        "session_behavior_latest": directory / DEFAULT_V51_SESSION_BEHAVIOR_LATEST,
     }
 
 
@@ -419,6 +523,7 @@ def main() -> None:
     print(f"Latest: {result.latest_path}")
     print(f"Live candidate probe: {result.probe_path}")
     print(f"Live candidate probe latest: {result.probe_latest_path}")
+    print(f"Session behavior latest: {result.session_behavior_latest_path}")
     print("No orders were sent. This is diagnostics only.")
 
 
@@ -439,6 +544,267 @@ def _candidate_rows(decision_log: pd.DataFrame) -> pd.DataFrame:
         if column not in candidates.columns:
             candidates[column] = pd.NA
     return candidates
+
+
+def _build_v51_diagnostic_features(market_data: pd.DataFrame) -> pd.DataFrame:
+    if strategy_v50_pine.V50_REQUIRED_COLUMNS.issubset(market_data.columns):
+        return market_data.copy()
+    return strategy_v50_pine.build_v50_features(market_data)
+
+
+def _feature_lookup_by_time(features: pd.DataFrame) -> dict[pd.Timestamp, pd.Series]:
+    if features.empty or not isinstance(features.index, pd.DatetimeIndex):
+        return {}
+    return {pd.Timestamp(index).tz_localize(None): row for index, row in features.iterrows()}
+
+
+def _feature_row_for_decision(row: pd.Series, feature_lookup: dict[pd.Timestamp, pd.Series]) -> pd.Series | None:
+    try:
+        timestamp = pd.Timestamp(row.get("candle_time")).tz_localize(None)
+    except Exception:
+        return None
+    return feature_lookup.get(timestamp)
+
+
+def _diagnostics_for_row(row: pd.Series, config: V51DemoIntradayConfig) -> dict[str, Any]:
+    side = str(row.get("side", "")).upper()
+    score = _numeric(row.get("score"))
+    context_bias = _context_bias(row)
+    quality_decision = _quality_guard_decision(row, side)
+    breakdown, total, positive = _score_breakdown(row, side)
+    final_reason = str(row.get("reason", ""))
+    asia_class = _asia_shadow_classification(row)
+    return {
+        "setup_score": score,
+        "context_bias": context_bias,
+        "quality_guard_decision": quality_decision,
+        "execution_decision": str(row.get("decision", "")),
+        "final_reason": final_reason,
+        "guard_category": _guard_category(final_reason),
+        "score_breakdown": breakdown,
+        "score_breakdown_total": total,
+        "high_score_explanation": _high_score_explanation(positive, score),
+        "htf_bias_direction": context_bias,
+        "candidate_side": side,
+        "countertrend": _countertrend(side, context_bias),
+        "m15_state": _m15_state(row),
+        "m5_m1_timing": _m5_m1_timing(row, side),
+        "sweep_reclaim_present": _sweep_reclaim_present(row, side),
+        "displacement_present": _displacement_present(row, side),
+        "quality_guard_detail": _quality_guard_detail(row, side, context_bias, final_reason, config),
+        "asia_shadow_classification": asia_class,
+        "asia_execution_mode": "SHADOW_ONLY" if asia_class else "",
+    }
+
+
+def _ensure_diagnostic_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.copy()
+    for column in REJECTION_COLUMNS:
+        if column not in result.columns:
+            result[column] = pd.NA
+    return result
+
+
+def _context_bias(row: pd.Series) -> str:
+    long_bias = _bool(row, "v50_trend4_long") or _bool(row, "v50_soft4_long") or _bool(row, "v50_mom1_long")
+    short_bias = _bool(row, "v50_trend4_short") or _bool(row, "v50_soft4_short") or _bool(row, "v50_mom1_short")
+    if long_bias and not short_bias:
+        return "BULL"
+    if short_bias and not long_bias:
+        return "BEAR"
+    if long_bias and short_bias:
+        return "MIXED"
+    return "UNKNOWN"
+
+
+def _quality_guard_decision(row: pd.Series, side: str) -> str:
+    if side == "BUY":
+        return "PASS" if _bool(row, "v50_quality_long_ok") else "BLOCKED"
+    if side == "SELL":
+        return "PASS" if _bool(row, "v50_quality_short_ok") else "BLOCKED"
+    return "N/A"
+
+
+def _score_breakdown(row: pd.Series, side: str) -> tuple[str, float, list[str]]:
+    if side not in {"BUY", "SELL"}:
+        return "", 0.0, []
+    suffix = "long" if side == "BUY" else "short"
+    sign = 1 if side == "BUY" else -1
+    components = {
+        "htf": 22.0 if _bool(row, f"v50_trend4_{suffix}") else 11.0 if _bool(row, f"v50_soft4_{suffix}") else 0.0,
+        "h1": 20.0 if _bool(row, f"v50_strong1_{suffix}") else 14.0 if _bool(row, f"v50_mom1_{suffix}") else 0.0,
+        "m15": 18.0 if _bool(row, f"v50_struct15_{suffix}") else 9.0 if _m15_close_vs_ema50(row, sign) else 0.0,
+        "m10": 12.0 if _bool(row, f"v50_trigger10_{suffix}") else 0.0,
+        "m5": 10.0 if _bool(row, f"v50_trigger5_{suffix}") else 0.0,
+        "liquidity": 7.0 if _bool(row, f"v50_sweep_{suffix}") else 4.0 if _bool(row, f"v50_bos_{suffix}") else 0.0,
+        "value": 6.0 if _bool(row, "v50_above_value" if side == "BUY" else "v50_below_value") else 0.0,
+        "ema_stack": 4.0 if _ema_stack(row, sign) else 0.0,
+        "session": 5.0 if _bool(row, "v50_in_session") else 0.0,
+        "volume": 3.0 if _bool(row, "v50_volume_ok") else 0.0,
+        "penalty_chase": -10.0 if _bool(row, f"v50_{suffix}_chase_block") else 0.0,
+        "penalty_late_impulse": -16.0 if _bool(row, f"v50_late_{suffix}_impulse") else 0.0,
+        "penalty_chop": -8.0 if _bool(row, "v50_chop_block") else 0.0,
+        "penalty_time_guard": -4.0 if _bool(row, "v50_time_guard") else 0.0,
+    }
+    total = max(0.0, min(100.0, sum(components.values())))
+    positive = [f"{name}+{value:g}" for name, value in components.items() if value > 0]
+    breakdown = "; ".join(f"{name}={value:g}" for name, value in components.items())
+    return breakdown, total, positive
+
+
+def _high_score_explanation(positive: list[str], score: float) -> str:
+    if score < 60:
+        return ""
+    return "high setup score from " + (", ".join(positive) if positive else "available V50 score inputs")
+
+
+def _guard_category(reason: str) -> str:
+    lower = str(reason).lower()
+    if "session blocked" in lower:
+        return "session"
+    if "quality guard" in lower or "setup not confirmed" in lower or "adx" in lower:
+        return "setup_quality"
+    if "score" in lower:
+        return "score"
+    if "spread" in lower:
+        return "spread"
+    if "stale" in lower:
+        return "stale_data"
+    if "future" in lower or "time" in lower:
+        return "time_alignment"
+    if "max trades" in lower:
+        return "max_trades"
+    if "risk" in lower or "rr" in lower:
+        return "risk_reward"
+    if "mtf" in lower or "bias" in lower:
+        return "mtf_bias"
+    return "other"
+
+
+def _countertrend(side: str, context_bias: str) -> bool:
+    return (side == "BUY" and context_bias == "BEAR") or (side == "SELL" and context_bias == "BULL")
+
+
+def _m15_state(row: pd.Series) -> str:
+    if _bool(row, "v50_struct15_long"):
+        return "BULL"
+    if _bool(row, "v50_struct15_short"):
+        return "BEAR"
+    if _value(row, "v50_15m_close") > _value(row, "v50_15m_ema50"):
+        return "BULL_SOFT"
+    if _value(row, "v50_15m_close") < _value(row, "v50_15m_ema50"):
+        return "BEAR_SOFT"
+    return "RANGE"
+
+
+def _m5_m1_timing(row: pd.Series, side: str) -> str:
+    suffix = "long" if side == "BUY" else "short"
+    m5_ready = _bool(row, f"v50_trigger5_{suffix}")
+    m10_ready = _bool(row, f"v50_trigger10_{suffix}")
+    return f"M5={'READY' if m5_ready else 'NOT_READY'}; M1=UNAVAILABLE; M10={'READY' if m10_ready else 'NOT_READY'}"
+
+
+def _sweep_reclaim_present(row: pd.Series, side: str) -> bool:
+    suffix = "long" if side == "BUY" else "short"
+    return _bool(row, f"v50_sweep_{suffix}")
+
+
+def _displacement_present(row: pd.Series, side: str) -> bool:
+    suffix = "long" if side == "BUY" else "short"
+    return _bool(row, f"v50_bos_{suffix}") or (
+        _value(row, "v50_candle_body") >= _value(row, "v50_atr") * 0.35
+        and _value(row, "v50_adx") >= 16.0
+    )
+
+
+def _quality_guard_detail(
+    row: pd.Series,
+    side: str,
+    context_bias: str,
+    final_reason: str,
+    config: V51DemoIntradayConfig,
+) -> str:
+    details = [
+        f"HTF bias direction={context_bias}",
+        f"candidate side={side}",
+        f"countertrend={_countertrend(side, context_bias)}",
+        f"M15 state={_m15_state(row)}",
+        f"M5/M1 timing={_m5_m1_timing(row, side)}",
+        f"sweep/reclaim present={_sweep_reclaim_present(row, side)}",
+        f"displacement present={_displacement_present(row, side)}",
+        f"allowed_sessions={','.join(config.allowed_sessions)}",
+        f"reason={final_reason}",
+    ]
+    return " | ".join(details)
+
+
+def _asia_shadow_classification(row: pd.Series) -> str:
+    session = str(row.get("session", "")).upper()
+    if session not in {"ASIA", "ASIA/LONDON"}:
+        return ""
+    if _bool(row, "v50_sweep_long") and _bool(row, "v50_sweep_short"):
+        return "ASIA_FALSE_BREAK"
+    if _bool(row, "v50_sweep_short"):
+        return "ASIA_LIQUIDITY_ABOVE"
+    if _bool(row, "v50_sweep_long"):
+        return "ASIA_LIQUIDITY_BELOW"
+    if _bool(row, "v50_chop_block") or _value(row, "v50_adx") < 16.0:
+        return "ASIA_RANGE_BUILD"
+    return "ASIA_ACCUMULATION"
+
+
+def _m15_close_vs_ema50(row: pd.Series, sign: int) -> bool:
+    close = _value(row, "v50_15m_close")
+    ema = _value(row, "v50_15m_ema50")
+    return close > ema if sign > 0 else close < ema
+
+
+def _ema_stack(row: pd.Series, sign: int) -> bool:
+    close = _value(row, "Close")
+    ema21 = _value(row, "v50_ema21")
+    ema50 = _value(row, "v50_ema50")
+    return close > ema21 and close > ema50 if sign > 0 else close < ema21 and close < ema50
+
+
+def _high_score_rejection_lines(candidates: pd.DataFrame) -> list[str]:
+    if candidates.empty:
+        return []
+    rejected = candidates[
+        (candidates["decision"].astype(str) != "ACCEPTED")
+        & (pd.to_numeric(candidates["score"], errors="coerce").fillna(0.0) >= 60.0)
+    ]
+    lines = []
+    for _, row in rejected.iterrows():
+        lines.append(
+            f"{row.get('candle_time')} | {row.get('session')} | {row.get('side')} | "
+            f"setup_score={row.get('setup_score')} | context_bias={row.get('context_bias')} | "
+            f"quality_guard_decision={row.get('quality_guard_decision')} | "
+            f"execution_decision={row.get('execution_decision')} | guard={row.get('guard_category')} | "
+            f"breakdown={row.get('score_breakdown')} | final_reason={row.get('final_reason')}"
+        )
+    return lines
+
+
+def _bool(row: pd.Series, column: str) -> bool:
+    value = row.get(column, False)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if pd.isna(value):
+        return False
+    return bool(value)
+
+
+def _numeric(value: Any) -> float:
+    try:
+        if value is None or pd.isna(value):
+            return 0.0
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _value(row: pd.Series, column: str) -> float:
+    return _numeric(row.get(column))
 
 
 def _latest_data_timestamp(data: pd.DataFrame) -> pd.Timestamp | None:
@@ -675,6 +1041,19 @@ def _write_error_reports(
         encoding="utf-8",
     )
     paths["probe_latest"].write_text(build_probe_latest_text(probe.iloc[0].to_dict()), encoding="utf-8")
+    paths["session_behavior_latest"].write_text(
+        "\n".join(
+            [
+                "V51 Session Behavior",
+                "=" * 72,
+                f"Status: {status}",
+                f"Reason: {reason}",
+                "No orders were sent. This is diagnostics only.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":
