@@ -88,6 +88,12 @@ REJECTION_COLUMNS = [
     "quality_guard_detail",
     "asia_shadow_classification",
     "asia_execution_mode",
+    "asia_range_high",
+    "asia_range_low",
+    "asia_swept_high",
+    "asia_swept_low",
+    "london_manipulation_detected",
+    "ny_reversal_candidate",
 ]
 
 PROBE_COLUMNS = [
@@ -283,7 +289,7 @@ def enrich_decision_log_for_diagnostics(
 
     enriched = decision_log.copy()
     feature_lookup = _feature_lookup_by_time(features)
-    diagnostics: list[dict[str, Any]] = []
+    merged_rows: list[dict[str, Any]] = []
     for _, row in enriched.iterrows():
         feature_row = _feature_row_for_decision(row, feature_lookup)
         merged = row.copy()
@@ -291,7 +297,12 @@ def enrich_decision_log_for_diagnostics(
             for column, value in feature_row.items():
                 if column not in merged.index:
                     merged[column] = value
-        diagnostics.append(_diagnostics_for_row(merged, config))
+        merged_rows.append(dict(merged))
+    working = pd.DataFrame(merged_rows, index=enriched.index)
+    working = _add_asia_liquidity_context(working)
+    diagnostics: list[dict[str, Any]] = []
+    for _, row in working.iterrows():
+        diagnostics.append(_diagnostics_for_row(row, config))
     diagnostic_frame = pd.DataFrame(diagnostics, index=enriched.index)
     for column in diagnostic_frame.columns:
         enriched[column] = diagnostic_frame[column]
@@ -392,8 +403,17 @@ def build_session_behavior_latest_text(decision_log: pd.DataFrame) -> str:
         if str(session).upper() in {"ASIA", "ASIA/LONDON"}:
             classes = group["asia_shadow_classification"].astype(str).value_counts()
             class_text = ", ".join(f"{name}={count}" for name, count in classes.items() if name and name != "nan")
+            asia_high = _last_non_empty(group.get("asia_range_high"))
+            asia_low = _last_non_empty(group.get("asia_range_low"))
             lines.append(f"- Asia shadow classifications: {class_text or 'n/a'}")
-            lines.append("- Asia execution mode: SHADOW_ONLY")
+            lines.append(f"- Asia range high: {asia_high}")
+            lines.append(f"- Asia range low: {asia_low}")
+            lines.append(f"- Asia swept high: {int(_bool_series_sum(group.get('asia_swept_high')))}")
+            lines.append(f"- Asia swept low: {int(_bool_series_sum(group.get('asia_swept_low')))}")
+            lines.append(f"- London manipulation detected: {int(_bool_series_sum(group.get('london_manipulation_detected')))}")
+            lines.append("- Asia execution mode: SHADOW_ONLY/REPORT_ONLY")
+        if str(session).upper() == "NEW YORK":
+            lines.append(f"- NY reversal candidates after Asia sweep: {int(_bool_series_sum(group.get('ny_reversal_candidate')))}")
         lines.append("")
     lines.append("No orders were sent. This is diagnostics only.")
     return "\n".join(lines) + "\n"
@@ -566,14 +586,80 @@ def _feature_row_for_decision(row: pd.Series, feature_lookup: dict[pd.Timestamp,
     return feature_lookup.get(timestamp)
 
 
+def _add_asia_liquidity_context(decision_log: pd.DataFrame) -> pd.DataFrame:
+    """Attach report-only Asia range and sweep context without changing decisions."""
+    result = decision_log.copy()
+    context_columns = {
+        "asia_range_high": pd.NA,
+        "asia_range_low": pd.NA,
+        "asia_swept_high": False,
+        "asia_swept_low": False,
+        "london_manipulation_detected": False,
+        "ny_reversal_candidate": False,
+    }
+    for column, default in context_columns.items():
+        if column not in result.columns:
+            result[column] = default
+    if result.empty or "candle_time" not in result.columns:
+        return result
+
+    result["_diagnostic_candle_time"] = [_naive_timestamp(value) for value in result["candle_time"]]
+    result["_diagnostic_trade_date"] = [
+        timestamp.date() if not pd.isna(timestamp) else None for timestamp in result["_diagnostic_candle_time"]
+    ]
+
+    sweep_sessions = {"ASIA/LONDON", "LONDON", "LONDON/US"}
+    for trade_date, group in result.groupby("_diagnostic_trade_date", dropna=True):
+        if trade_date is None:
+            continue
+        asia_high: float | None = None
+        asia_low: float | None = None
+        london_swept_high = False
+        london_swept_low = False
+        sorted_group = group.sort_values("_diagnostic_candle_time")
+        for index, row in sorted_group.iterrows():
+            session = str(row.get("session", "")).upper()
+            high = _numeric(row.get("High"))
+            low = _numeric(row.get("Low"))
+            close = _numeric(row.get("Close"))
+
+            if session == "ASIA":
+                asia_high = high if asia_high is None else max(asia_high, high)
+                asia_low = low if asia_low is None else min(asia_low, low)
+
+            if asia_high is not None and asia_low is not None:
+                result.at[index, "asia_range_high"] = asia_high
+                result.at[index, "asia_range_low"] = asia_low
+                swept_high = session in sweep_sessions and high > asia_high
+                swept_low = session in sweep_sessions and low < asia_low
+                manipulation = bool(swept_high or swept_low)
+                result.at[index, "asia_swept_high"] = bool(swept_high)
+                result.at[index, "asia_swept_low"] = bool(swept_low)
+                result.at[index, "london_manipulation_detected"] = bool(manipulation)
+                side = str(row.get("side", "")).upper()
+                ny_reversal = session == "NEW YORK" and (
+                    (side == "SELL" and london_swept_high)
+                    or (side == "BUY" and london_swept_low)
+                    or (side == "" and (london_swept_high or london_swept_low))
+                )
+                result.at[index, "ny_reversal_candidate"] = bool(ny_reversal)
+
+                if manipulation:
+                    london_swept_high = london_swept_high or bool(swept_high and close <= asia_high)
+                    london_swept_low = london_swept_low or bool(swept_low and close >= asia_low)
+
+    return result.drop(columns=["_diagnostic_candle_time", "_diagnostic_trade_date"], errors="ignore")
+
+
 def _diagnostics_for_row(row: pd.Series, config: V51DemoIntradayConfig) -> dict[str, Any]:
     side = str(row.get("side", "")).upper()
     score = _numeric(row.get("score"))
     context_bias = _context_bias(row)
     quality_decision = _quality_guard_decision(row, side)
     breakdown, total, positive = _score_breakdown(row, side)
-    final_reason = str(row.get("reason", ""))
+    final_reason = _diagnostic_final_reason(row, config)
     asia_class = _asia_shadow_classification(row)
+    asia_execution_mode = _asia_execution_mode(row, config)
     return {
         "setup_score": score,
         "context_bias": context_bias,
@@ -593,7 +679,13 @@ def _diagnostics_for_row(row: pd.Series, config: V51DemoIntradayConfig) -> dict[
         "displacement_present": _displacement_present(row, side),
         "quality_guard_detail": _quality_guard_detail(row, side, context_bias, final_reason, config),
         "asia_shadow_classification": asia_class,
-        "asia_execution_mode": "SHADOW_ONLY" if asia_class else "",
+        "asia_execution_mode": asia_execution_mode,
+        "asia_range_high": _optional_float(row.get("asia_range_high")),
+        "asia_range_low": _optional_float(row.get("asia_range_low")),
+        "asia_swept_high": _bool(row, "asia_swept_high"),
+        "asia_swept_low": _bool(row, "asia_swept_low"),
+        "london_manipulation_detected": _bool(row, "london_manipulation_detected"),
+        "ny_reversal_candidate": _bool(row, "ny_reversal_candidate"),
     }
 
 
@@ -660,6 +752,8 @@ def _high_score_explanation(positive: list[str], score: float) -> str:
 
 def _guard_category(reason: str) -> str:
     lower = str(reason).lower()
+    if "asia_context" in lower or "asia_london_context" in lower:
+        return "session_context"
     if "session blocked" in lower:
         return "session"
     if "quality guard" in lower or "setup not confirmed" in lower or "adx" in lower:
@@ -732,6 +826,13 @@ def _quality_guard_detail(
         f"M5/M1 timing={_m5_m1_timing(row, side)}",
         f"sweep/reclaim present={_sweep_reclaim_present(row, side)}",
         f"displacement present={_displacement_present(row, side)}",
+        f"asia_range_high={_optional_float(row.get('asia_range_high'))}",
+        f"asia_range_low={_optional_float(row.get('asia_range_low'))}",
+        f"asia_swept_high={_bool(row, 'asia_swept_high')}",
+        f"asia_swept_low={_bool(row, 'asia_swept_low')}",
+        f"london_manipulation_detected={_bool(row, 'london_manipulation_detected')}",
+        f"ny_reversal_candidate={_bool(row, 'ny_reversal_candidate')}",
+        f"asia_london_context_valid={_asia_london_context_valid(row, config)}",
         f"allowed_sessions={','.join(config.allowed_sessions)}",
         f"reason={final_reason}",
     ]
@@ -742,6 +843,12 @@ def _asia_shadow_classification(row: pd.Series) -> str:
     session = str(row.get("session", "")).upper()
     if session not in {"ASIA", "ASIA/LONDON"}:
         return ""
+    if _bool(row, "asia_swept_high") and _bool(row, "asia_swept_low"):
+        return "ASIA_FALSE_BREAK"
+    if _bool(row, "asia_swept_high"):
+        return "ASIA_LIQUIDITY_ABOVE"
+    if _bool(row, "asia_swept_low"):
+        return "ASIA_LIQUIDITY_BELOW"
     if _bool(row, "v50_sweep_long") and _bool(row, "v50_sweep_short"):
         return "ASIA_FALSE_BREAK"
     if _bool(row, "v50_sweep_short"):
@@ -751,6 +858,58 @@ def _asia_shadow_classification(row: pd.Series) -> str:
     if _bool(row, "v50_chop_block") or _value(row, "v50_adx") < 16.0:
         return "ASIA_RANGE_BUILD"
     return "ASIA_ACCUMULATION"
+
+
+def _asia_execution_mode(row: pd.Series, config: V51DemoIntradayConfig) -> str:
+    session = str(row.get("session", "")).upper()
+    if session == "ASIA":
+        return "SHADOW_ONLY"
+    if session == "ASIA/LONDON":
+        return "CONTEXT_PASS_REPORT_ONLY" if _asia_london_context_valid(row, config) else "REPORT_ONLY"
+    return ""
+
+
+def _diagnostic_final_reason(row: pd.Series, config: V51DemoIntradayConfig) -> str:
+    reason = str(row.get("reason", ""))
+    session = str(row.get("session", "")).upper()
+    if session == "FX CLOSED":
+        return reason
+    if session == "ASIA" and reason.lower().startswith("session blocked"):
+        return "asia_context_only"
+    if session == "ASIA/LONDON" and reason.lower().startswith("session blocked"):
+        if _asia_london_context_valid(row, config):
+            return "asia_london_context_session_passed_report_only"
+        if _bool(row, "asia_swept_high") or _bool(row, "asia_swept_low"):
+            return f"{reason} | asia_sweep_context_uncertain_or_quality_blocked"
+    return reason
+
+
+def _asia_london_context_valid(row: pd.Series, config: V51DemoIntradayConfig) -> bool:
+    side = str(row.get("side", "")).upper()
+    if str(row.get("session", "")).upper() != "ASIA/LONDON":
+        return False
+    if side not in {"BUY", "SELL"}:
+        return False
+    if _numeric(row.get("score")) < config.min_score:
+        return False
+    if _numeric(row.get("score_gap")) < config.min_score_gap:
+        return False
+    if _quality_guard_decision(row, side) != "PASS":
+        return False
+    return _asia_sweep_reclaim_matches_side(row, side)
+
+
+def _asia_sweep_reclaim_matches_side(row: pd.Series, side: str) -> bool:
+    asia_high = _numeric(row.get("asia_range_high"))
+    asia_low = _numeric(row.get("asia_range_low"))
+    close = _numeric(row.get("Close"))
+    if asia_high <= 0 or asia_low <= 0 or close <= 0:
+        return False
+    if side == "SELL":
+        return _bool(row, "asia_swept_high") and close <= asia_high
+    if side == "BUY":
+        return _bool(row, "asia_swept_low") and close >= asia_low
+    return False
 
 
 def _m15_close_vs_ema50(row: pd.Series, sign: int) -> bool:
@@ -794,6 +953,12 @@ def _bool(row: pd.Series, column: str) -> bool:
     return bool(value)
 
 
+def _bool_series_sum(series: pd.Series | None) -> int:
+    if series is None:
+        return 0
+    return int(sum(_bool(pd.Series({"value": value}), "value") for value in series))
+
+
 def _numeric(value: Any) -> float:
     try:
         if value is None or pd.isna(value):
@@ -805,6 +970,36 @@ def _numeric(value: Any) -> float:
 
 def _value(row: pd.Series, column: str) -> float:
     return _numeric(row.get(column))
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _last_non_empty(series: pd.Series | None) -> str:
+    if series is None:
+        return "n/a"
+    values = series.dropna()
+    if values.empty:
+        return "n/a"
+    return str(values.iloc[-1])
+
+
+def _naive_timestamp(value: Any) -> pd.Timestamp:
+    try:
+        timestamp = pd.Timestamp(value)
+    except Exception:
+        return pd.NaT
+    if pd.isna(timestamp):
+        return pd.NaT
+    if timestamp.tzinfo is not None:
+        timestamp = timestamp.tz_convert("UTC").tz_localize(None)
+    return timestamp
 
 
 def _latest_data_timestamp(data: pd.DataFrame) -> pd.Timestamp | None:

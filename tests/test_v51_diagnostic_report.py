@@ -223,6 +223,13 @@ def detailed_shadow_decision_log() -> pd.DataFrame:
 def session_blocked_decision_log() -> pd.DataFrame:
     rows = []
     for idx, session in enumerate(["ASIA", "ASIA/LONDON", "FX CLOSED"]):
+        high = 2401.0
+        low = 2399.0
+        close = 2400.0
+        if session == "ASIA/LONDON":
+            high = 2400.8
+            low = 2398.5
+            close = 2399.2
         rows.append(
             {
                 "signal_id": f"V51-202606030{idx}00-SELL",
@@ -240,6 +247,9 @@ def session_blocked_decision_log() -> pd.DataFrame:
                 "spread_cost": 0.0,
                 "slippage_estimate": 0.1,
                 "reason": f"session blocked: {session}",
+                "High": high,
+                "Low": low,
+                "Close": close,
                 "v50_sweep_short": session == "ASIA",
                 "v50_sweep_long": session == "ASIA/LONDON",
                 "v50_chop_block": session == "FX CLOSED",
@@ -247,6 +257,107 @@ def session_blocked_decision_log() -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def asia_london_sweep_decision_log() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "signal_id": "V51-202606030000-NO_TRADE",
+                "candle_time": "2026-06-03T00:00:00",
+                "session": "ASIA",
+                "side": "",
+                "decision": "NO_TRADE",
+                "score": 0.0,
+                "score_gap": 0.0,
+                "risk_reward": None,
+                "spread_cost": 0.0,
+                "slippage_estimate": 0.1,
+                "reason": "V51 no directional score candidate",
+                "High": 2401.0,
+                "Low": 2399.0,
+                "Close": 2400.0,
+            },
+            {
+                "signal_id": "V51-202606030015-NO_TRADE",
+                "candle_time": "2026-06-03T00:15:00",
+                "session": "ASIA",
+                "side": "",
+                "decision": "NO_TRADE",
+                "score": 0.0,
+                "score_gap": 0.0,
+                "risk_reward": None,
+                "spread_cost": 0.0,
+                "slippage_estimate": 0.1,
+                "reason": "V51 no directional score candidate",
+                "High": 2401.5,
+                "Low": 2398.8,
+                "Close": 2400.5,
+            },
+            {
+                "signal_id": "V51-202606030900-SELL",
+                "candle_time": "2026-06-03T09:00:00",
+                "session": "ASIA/LONDON",
+                "side": "SELL",
+                "decision": "REJECTED",
+                "score": 76.0,
+                "score_gap": 18.0,
+                "entry_price": 2401.2,
+                "stop_loss": 2402.4,
+                "take_profit": 2399.7,
+                "risk_reward": 1.25,
+                "lot_size": 0.01,
+                "spread_cost": 0.0,
+                "slippage_estimate": 0.1,
+                "reason": "session blocked: ASIA/LONDON",
+                "High": 2402.0,
+                "Low": 2399.6,
+                "Close": 2401.3,
+                "v50_quality_short_ok": True,
+                "v50_quality_long_ok": False,
+                "v50_trend4_short": True,
+                "v50_mom1_short": True,
+                "v50_struct15_short": True,
+                "v50_trigger5_short": True,
+                "v50_trigger10_short": True,
+                "v50_sweep_short": True,
+                "v50_adx": 22.0,
+                "v50_in_session": False,
+                "v50_volume_ok": True,
+            },
+            {
+                "signal_id": "V51-202606030915-BUY",
+                "candle_time": "2026-06-03T09:15:00",
+                "session": "ASIA/LONDON",
+                "side": "BUY",
+                "decision": "REJECTED",
+                "score": 76.0,
+                "score_gap": 18.0,
+                "entry_price": 2401.4,
+                "stop_loss": 2400.2,
+                "take_profit": 2402.9,
+                "risk_reward": 1.25,
+                "lot_size": 0.01,
+                "spread_cost": 0.0,
+                "slippage_estimate": 0.1,
+                "reason": "session blocked: ASIA/LONDON",
+                "High": 2402.2,
+                "Low": 2399.8,
+                "Close": 2401.4,
+                "v50_quality_short_ok": True,
+                "v50_quality_long_ok": False,
+                "v50_trend4_long": True,
+                "v50_mom1_long": True,
+                "v50_struct15_long": True,
+                "v50_trigger5_long": True,
+                "v50_trigger10_long": True,
+                "v50_sweep_long": True,
+                "v50_adx": 22.0,
+                "v50_in_session": False,
+                "v50_volume_ok": True,
+            },
+        ]
+    )
 
 
 def test_v51_diagnostic_report_crea_report_con_dati_validi(tmp_path, monkeypatch):
@@ -400,7 +511,10 @@ def test_v51_asia_shadow_classification_report_only(tmp_path, monkeypatch):
     assert asia["asia_shadow_classification"] == "ASIA_LIQUIDITY_ABOVE"
     assert asia_london["asia_shadow_classification"] == "ASIA_LIQUIDITY_BELOW"
     assert asia["asia_execution_mode"] == "SHADOW_ONLY"
-    assert "Asia execution mode: SHADOW_ONLY" in session_text
+    assert asia["final_reason"] == "asia_context_only"
+    assert pd.notna(asia["asia_range_high"])
+    assert pd.notna(asia["asia_range_low"])
+    assert "Asia execution mode: SHADOW_ONLY/REPORT_ONLY" in session_text
     assert "diagnostics only" in session_text.lower()
 
 
@@ -411,14 +525,67 @@ def test_v51_session_blocked_distingue_asia_asia_london_fx_closed(tmp_path, monk
     result = diagnostic.run_v51_diagnostic_report(csv_path=csv_path, output_dir=tmp_path / "diagnostics", candles=200)
 
     rejections = pd.read_csv(result.rejections_path)
-    reasons = set(rejections["final_reason"].astype(str))
+    raw_reasons = set(rejections["reason"].astype(str))
+    final_reasons = set(rejections["final_reason"].astype(str))
     session_text = result.session_behavior_latest_path.read_text(encoding="utf-8")
-    assert "session blocked: ASIA" in reasons
-    assert "session blocked: ASIA/LONDON" in reasons
-    assert "session blocked: FX CLOSED" in reasons
+    assert "session blocked: ASIA" in raw_reasons
+    assert "session blocked: ASIA/LONDON" in raw_reasons
+    assert "session blocked: FX CLOSED" in raw_reasons
+    assert "asia_context_only" in final_reasons
+    assert "session blocked: ASIA/LONDON | asia_sweep_context_uncertain_or_quality_blocked" in final_reasons
+    assert "session blocked: FX CLOSED" in final_reasons
     assert "Session: ASIA" in session_text
     assert "Session: ASIA/LONDON" in session_text
     assert "Session: FX CLOSED" in session_text
+
+
+def test_v51_asia_context_collected_but_not_executed(tmp_path, monkeypatch):
+    csv_path = write_ohlcv_csv_until(tmp_path / "xauusd.csv", "2026-06-03 02:15:00")
+    monkeypatch.setattr(diagnostic, "build_demo_intraday_decision_log", lambda *_args, **_kwargs: session_blocked_decision_log())
+
+    result = diagnostic.run_v51_diagnostic_report(csv_path=csv_path, output_dir=tmp_path / "diagnostics", candles=200)
+
+    row = pd.read_csv(result.rejections_path)
+    asia = row[row["session"] == "ASIA"].iloc[0]
+    assert asia["decision"] == "REJECTED"
+    assert asia["execution_decision"] == "REJECTED"
+    assert asia["final_reason"] == "asia_context_only"
+    assert asia["asia_execution_mode"] == "SHADOW_ONLY"
+    assert pd.notna(asia["asia_range_high"])
+    assert pd.notna(asia["asia_range_low"])
+
+
+def test_v51_asia_london_sweep_context_passa_solo_con_quality_guard_valida(tmp_path, monkeypatch):
+    csv_path = write_ohlcv_csv_until(tmp_path / "xauusd.csv", "2026-06-03 10:00:00")
+    monkeypatch.setattr(diagnostic, "build_demo_intraday_decision_log", lambda *_args, **_kwargs: asia_london_sweep_decision_log())
+
+    result = diagnostic.run_v51_diagnostic_report(csv_path=csv_path, output_dir=tmp_path / "diagnostics", candles=200)
+
+    rejections = pd.read_csv(result.rejections_path)
+    valid = rejections[rejections["signal_id"] == "V51-202606030900-SELL"].iloc[0]
+    invalid = rejections[rejections["signal_id"] == "V51-202606030915-BUY"].iloc[0]
+    assert valid["decision"] == "REJECTED"
+    assert valid["quality_guard_decision"] == "PASS"
+    assert valid["asia_swept_high"] is True or str(valid["asia_swept_high"]).lower() == "true"
+    assert valid["london_manipulation_detected"] is True or str(valid["london_manipulation_detected"]).lower() == "true"
+    assert valid["asia_execution_mode"] == "CONTEXT_PASS_REPORT_ONLY"
+    assert valid["final_reason"] == "asia_london_context_session_passed_report_only"
+    assert "asia_london_context_valid=True" in valid["quality_guard_detail"]
+    assert invalid["quality_guard_decision"] == "BLOCKED"
+    assert invalid["final_reason"] != "asia_london_context_session_passed_report_only"
+
+
+def test_v51_fx_closed_resta_bloccato(tmp_path, monkeypatch):
+    csv_path = write_ohlcv_csv_until(tmp_path / "xauusd.csv", "2026-06-03 02:15:00")
+    monkeypatch.setattr(diagnostic, "build_demo_intraday_decision_log", lambda *_args, **_kwargs: session_blocked_decision_log())
+
+    result = diagnostic.run_v51_diagnostic_report(csv_path=csv_path, output_dir=tmp_path / "diagnostics", candles=200)
+
+    row = pd.read_csv(result.rejections_path)
+    fx_closed = row[row["session"] == "FX CLOSED"].iloc[0]
+    assert fx_closed["decision"] == "REJECTED"
+    assert fx_closed["final_reason"] == "session blocked: FX CLOSED"
+    assert fx_closed["guard_category"] == "session"
 
 
 def test_v51_diagnostic_report_non_chiama_broker_execution_live():
