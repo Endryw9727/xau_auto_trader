@@ -42,3 +42,4 @@ scripts/force_refresh_m15_xauusd_p.py
 
 # Local VPS/demo execution override - never commit
 config/demo_execution.local.yaml
+config/strategy_v51.local.yaml

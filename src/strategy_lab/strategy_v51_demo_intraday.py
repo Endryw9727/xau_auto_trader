@@ -23,6 +23,7 @@ from src.strategy_lab import strategy_v50_pine
 
 STRATEGY_NAME = "demo_intraday_candidate"
 DEFAULT_V51_CONFIG_PATH = Path("config/strategy_v51.yaml")
+DEFAULT_V51_LOCAL_CONFIG_PATH = Path("config/strategy_v51.local.yaml")
 DEFAULT_V51_REPORT_DIR = Path("reports/strategy_lab")
 DEFAULT_V51_SIGNAL_LOG_PATH = DEFAULT_V51_REPORT_DIR / "v51_demo_intraday_signal_log.csv"
 DEFAULT_V50_SIGNAL_LOG_PATH = DEFAULT_V51_REPORT_DIR / "v50_high_margin_signal_log.csv"
@@ -129,12 +130,27 @@ class V51DemoIntradayConfig:
 
 
 def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntradayConfig:
-    """Load V51 config and validate demo-only safety gates."""
+    """Load V51 config (with optional local override) and validate safety gates.
+
+    A gitignored sibling ``*.local.yaml`` next to the config is merged on top of
+    it when present, so demo execution can be armed on the VPS without editing
+    the tracked config. ``allow_real_live`` must remain false in both files.
+    """
     config_path = Path(path)
     with config_path.open("r", encoding="utf-8") as file:
-        raw = yaml.safe_load(file) or {}
-    if not isinstance(raw, dict):
+        base_raw = yaml.safe_load(file) or {}
+    if not isinstance(base_raw, dict):
         raise ValueError(f"Invalid V51 config: {config_path}")
+
+    local_path = _local_v51_config_path(config_path)
+    local_raw = {}
+    if local_path.exists():
+        with local_path.open("r", encoding="utf-8") as file:
+            local_raw = yaml.safe_load(file) or {}
+        if not isinstance(local_raw, dict):
+            raise ValueError(f"Invalid V51 local config: {local_path}")
+    _validate_v51_config_source_safety(base_raw, local_raw)
+    raw = {**base_raw, **local_raw}
 
     allowed_sessions = raw.get("allowed_sessions", ("LONDON", "LONDON/US", "NEW YORK"))
     if isinstance(allowed_sessions, str):
@@ -681,6 +697,19 @@ def _as_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def _local_v51_config_path(config_path: Path) -> Path:
+    """Return the gitignored sibling local override path for a V51 config."""
+    if config_path == DEFAULT_V51_CONFIG_PATH:
+        return DEFAULT_V51_LOCAL_CONFIG_PATH
+    return config_path.with_name(f"{config_path.stem}.local{config_path.suffix}")
+
+
+def _validate_v51_config_source_safety(base: dict[str, Any], local: dict[str, Any]) -> None:
+    """Enforce that real live can never be enabled from either config source."""
+    if _as_bool(base.get("allow_real_live", False)) or _as_bool(local.get("allow_real_live", False)):
+        raise PermissionError("allow_real_live must remain false")
 
 
 def _is_valid_news_window(window: Any) -> bool:
