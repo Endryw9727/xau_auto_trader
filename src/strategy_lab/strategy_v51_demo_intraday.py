@@ -106,6 +106,14 @@ class V51DemoIntradayConfig:
     ai_reasoning_report_only: bool
     min_ai_confidence_to_trade: float
     min_trade_quality_score: float
+    # Protective demo guardrails (Phase 3 hardening). Disabled by default so the
+    # baseline behavior is unchanged; they can only block, never relax a gate.
+    news_block_enabled: bool = False
+    news_block_windows: tuple[str, ...] = ()
+    daily_loss_lock_enabled: bool = False
+    max_daily_loss_currency: float = 0.0
+    drawdown_lock_enabled: bool = False
+    min_equity_floor: float = 0.0
 
     @property
     def strategy_config(self) -> StrategyConfig:
@@ -176,6 +184,12 @@ def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntrad
         ai_reasoning_report_only=_as_bool(raw.get("ai_reasoning_report_only", True)),
         min_ai_confidence_to_trade=float(raw.get("min_ai_confidence_to_trade", 70)),
         min_trade_quality_score=float(raw.get("min_trade_quality_score", 70)),
+        news_block_enabled=_as_bool(raw.get("news_block_enabled", False)),
+        news_block_windows=_as_tuple(raw.get("news_block_windows", ())) if raw.get("news_block_windows") else (),
+        daily_loss_lock_enabled=_as_bool(raw.get("daily_loss_lock_enabled", False)),
+        max_daily_loss_currency=float(raw.get("max_daily_loss_currency", 0.0)),
+        drawdown_lock_enabled=_as_bool(raw.get("drawdown_lock_enabled", False)),
+        min_equity_floor=float(raw.get("min_equity_floor", 0.0)),
     )
     validate_v51_config(config)
     return config
@@ -225,6 +239,13 @@ def validate_v51_config(config: V51DemoIntradayConfig) -> None:
         raise ValueError("min_ai_confidence_to_trade must be between 0 and 100")
     if not 0 <= config.min_trade_quality_score <= 100:
         raise ValueError("min_trade_quality_score must be between 0 and 100")
+    if config.max_daily_loss_currency < 0:
+        raise ValueError("max_daily_loss_currency cannot be negative")
+    if config.min_equity_floor < 0:
+        raise ValueError("min_equity_floor cannot be negative")
+    for window in config.news_block_windows:
+        if not _is_valid_news_window(window):
+            raise ValueError(f"invalid news_block_window: {window!r} (expected HH:MM-HH:MM)")
 
 
 def generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> TradingSignal:
@@ -660,6 +681,26 @@ def _as_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def _is_valid_news_window(window: Any) -> bool:
+    """Validate a 'HH:MM-HH:MM' news window string (24h clock)."""
+    text = str(window).strip()
+    if text.count("-") != 1:
+        return False
+    start, end = text.split("-")
+    return _is_valid_hhmm(start) and _is_valid_hhmm(end)
+
+
+def _is_valid_hhmm(value: str) -> bool:
+    parts = value.strip().split(":")
+    if len(parts) != 2:
+        return False
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return False
+    return 0 <= hour <= 23 and 0 <= minute <= 59
 
 
 def _as_tuple(value: Any) -> tuple[str, ...]:

@@ -270,6 +270,13 @@ def run_v51_demo_execution_once(
         order_log = load_v51_demo_orders(output_dir)
         execution_log = load_v51_demo_execution_log(output_dir)
         trading_day = latest_closed_candle_time.normalize()
+
+        guardrail_reason = _guardrail_block_reason(mt5, config, now, trading_day)
+        if guardrail_reason is not None:
+            result = _result(False, "NO_TRADE", guardrail_reason, dry_run=dry_run, telemetry=no_candidate_telemetry)
+            append_v51_demo_log(output_dir, result, event="guardrail_block")
+            return result
+
         trades_today = _trades_for_day(order_log, trading_day)
         if trades_today >= config.max_trades_per_day:
             result = _result(
@@ -1347,6 +1354,131 @@ def _stale_data_reason(data: pd.DataFrame, config: V51DemoIntradayConfig, now: p
     if age_minutes > config.max_data_age_minutes:
         return f"MT5 data stale: latest closed candle is {age_minutes:.1f} minutes old"
     return None
+
+
+def _guardrail_block_reason(
+    mt5: Any,
+    config: V51DemoIntradayConfig,
+    now: pd.Timestamp,
+    trading_day: pd.Timestamp,
+) -> str | None:
+    """Protective demo guardrails. Each is opt-in and can only block, never relax.
+
+    Order: news block, daily realized-loss lock, account drawdown lock. When a
+    guardrail is disabled it is skipped, so the default config adds no behavior.
+    """
+    news_reason = _news_block_reason(config, now)
+    if news_reason is not None:
+        return news_reason
+    daily_loss_reason = _daily_loss_lock_reason(mt5, config, trading_day)
+    if daily_loss_reason is not None:
+        return daily_loss_reason
+    return _drawdown_lock_reason(mt5, config)
+
+
+def _news_block_reason(config: V51DemoIntradayConfig, now: pd.Timestamp) -> str | None:
+    if not config.news_block_enabled or not config.news_block_windows:
+        return None
+    current = _utc_now(now)
+    minute_of_day = current.hour * 60 + current.minute
+    for window in config.news_block_windows:
+        bounds = _parse_news_window(window)
+        if bounds is None:
+            continue
+        start, end = bounds
+        within = start <= minute_of_day <= end if start <= end else (minute_of_day >= start or minute_of_day <= end)
+        if within:
+            return f"news_block_active: now_utc={current.strftime('%H:%M')} within window {window}"
+    return None
+
+
+def _daily_loss_lock_reason(
+    mt5: Any,
+    config: V51DemoIntradayConfig,
+    trading_day: pd.Timestamp,
+) -> str | None:
+    if not config.daily_loss_lock_enabled or config.max_daily_loss_currency <= 0:
+        return None
+    realized = _realized_profit_for_day(mt5, config, trading_day)
+    if realized is None:
+        return None  # cannot determine: fail-open rather than brick the demo
+    if realized <= -abs(config.max_daily_loss_currency):
+        return (
+            "daily_loss_lock_active: realized "
+            f"{realized:.2f} <= -{abs(config.max_daily_loss_currency):.2f} for {trading_day.date()}"
+        )
+    return None
+
+
+def _drawdown_lock_reason(mt5: Any, config: V51DemoIntradayConfig) -> str | None:
+    if not config.drawdown_lock_enabled or config.min_equity_floor <= 0:
+        return None
+    account_info = getattr(mt5, "account_info", None)
+    if not callable(account_info):
+        return None
+    account = account_info()
+    equity = _float_or_none(getattr(account, "equity", None)) if account is not None else None
+    if equity is None:
+        return None
+    if equity < config.min_equity_floor:
+        return f"drawdown_lock_active: equity {equity:.2f} below floor {config.min_equity_floor:.2f}"
+    return None
+
+
+def _realized_profit_for_day(
+    mt5: Any,
+    config: V51DemoIntradayConfig,
+    trading_day: pd.Timestamp,
+) -> float | None:
+    """Sum realized profit of V51 demo deals for the trading day, or None if unknown."""
+    history_deals_get = getattr(mt5, "history_deals_get", None)
+    if not callable(history_deals_get):
+        return None
+    day = _utc_timestamp(trading_day).normalize()
+    start = day.to_pydatetime()
+    end = (day + pd.Timedelta(days=1)).to_pydatetime()
+    try:
+        deals = history_deals_get(start, end)
+    except Exception:
+        return None
+    if not deals:
+        return 0.0
+    total = 0.0
+    found = False
+    for deal in deals:
+        magic = _int_or_none(getattr(deal, "magic", None))
+        comment = str(getattr(deal, "comment", ""))
+        if magic == int(config.magic_number) or V51_DEMO_COMMENT in comment:
+            total += _float_or_none(getattr(deal, "profit", 0.0)) or 0.0
+            total += _float_or_none(getattr(deal, "commission", 0.0)) or 0.0
+            total += _float_or_none(getattr(deal, "swap", 0.0)) or 0.0
+            found = True
+    return total if found else 0.0
+
+
+def _parse_news_window(window: str) -> tuple[int, int] | None:
+    text = str(window).strip()
+    if text.count("-") != 1:
+        return None
+    start_text, end_text = text.split("-")
+    start = _hhmm_to_minutes(start_text)
+    end = _hhmm_to_minutes(end_text)
+    if start is None or end is None:
+        return None
+    return start, end
+
+
+def _hhmm_to_minutes(value: str) -> int | None:
+    parts = value.strip().split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour * 60 + minute
 
 
 def _trades_for_day(orders: pd.DataFrame, day: pd.Timestamp) -> int:

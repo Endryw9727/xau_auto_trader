@@ -293,6 +293,30 @@ La checklist verifica che `allow_real_live=false`, `demo_only=true`,
 I budget `daily_loss_limit_r` e `max_drawdown_r` sono parametri del report, non
 config di rischio: servono solo a misurare l'effetto teorico dei lock.
 
+## V51 Demo Protective Guardrails
+
+Il layer di esecuzione demo V51 include guardrail protettivi opt-in, tutti
+**disattivati di default** (quando spenti non cambiano il comportamento). Possono
+solo **bloccare** un nuovo ordine demo, mai allentare un gate esistente e mai
+armare l'esecuzione. Si configurano in `config/strategy_v51.yaml`:
+
+    news_block_enabled: false
+    news_block_windows: []          # es. ["12:25-12:35", "14:00-14:15"] in UTC
+    daily_loss_lock_enabled: false
+    max_daily_loss_currency: 0.0    # budget di perdita giornaliera (valuta conto)
+    drawdown_lock_enabled: false
+    min_equity_floor: 0.0           # equity minima: sotto, blocca
+
+- News block: blocca i nuovi ordini se l'ora UTC corrente cade in una finestra
+  news configurata.
+- Daily-loss lock: somma il profitto realizzato dei deal demo V51 del giorno (via
+  MT5 history) e blocca se la perdita supera `max_daily_loss_currency`.
+- Drawdown lock: blocca se l'equity del conto scende sotto `min_equity_floor`.
+
+Questi guardrail non abilitano l'esecuzione: i flag `allow_real_live`,
+`demo_only`, `allow_demo_execution` ed `execution_enabled` restano invariati.
+Armare la demo execution resta una decisione separata, esplicita e manuale.
+
 ## MT5 Multi-Timeframe CSV Update
 
 Lo script aggiorna in modalita read-only i CSV multi-timeframe usati dal report

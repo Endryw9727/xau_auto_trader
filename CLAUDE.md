@@ -245,9 +245,16 @@ daily-loss lock e drawdown lock, e produce una checklist read-only dei flag di
 sicurezza (`allow_real_live`, `demo_only`, `allow_demo_execution`,
 `execution_enabled`, `max_open_positions`). Output in
 `reports/diagnostics/v51_demo_readiness_*`. NON modifica config/flag, NON importa
-codice di execution, NON invia ordini. **Armare la demo execution resta una
-decisione separata, esplicita e manuale**: i flag in `config/strategy_v51.yaml` e
-il codice in `src/execution/` non vanno toccati senza autorizzazione.
+codice di execution, NON invia ordini.
+
+Hardening dell'execution demo (autorizzato, flag di abilitazione **OFF**): il
+`v51_demo_executor` ha tre guardrail protettivi opt-in — news block, daily-loss
+lock, drawdown lock — **disattivati di default** (config: `news_block_enabled`,
+`daily_loss_lock_enabled`, `drawdown_lock_enabled`). Possono solo **bloccare** un
+ordine demo, mai allentare un gate. I flag `allow_real_live`, `demo_only`,
+`allow_demo_execution`, `execution_enabled` restano invariati. **Armare la demo
+execution resta una decisione separata, esplicita e manuale**: i flag in
+`config/strategy_v51.yaml` non vanno portati a `true` senza autorizzazione.
 
 ---
 
