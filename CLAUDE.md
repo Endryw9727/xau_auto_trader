@@ -140,6 +140,7 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Market structure sessioni | `src/analysis/session_structure.py`, `src/analysis/v51_structure_context.py`, `scripts/run_v51_market_structure_diagnostics.py` |
 | Validazione esiti V51 | `src/analysis/v51_outcome_simulation.py`, `scripts/run_v51_outcome_diagnostics.py` |
 | Quality review V51 | `src/analysis/v51_quality_review.py`, `scripts/run_v51_quality_review.py` |
+| Demo readiness (report-only) | `src/analysis/v51_demo_readiness.py`, `scripts/run_v51_demo_readiness_report.py` |
 | Validazione esiti V51 | `src/analysis/v51_outcome_simulation.py`, `scripts/run_v51_outcome_diagnostics.py` |
 | Ciclo demo live-safe | `scripts/run_v51_live_safe_cycle.py` |
 | Contesto MTF | `scripts/run_v51_mtf_context_report.py` |
@@ -236,6 +237,17 @@ Solo dopo la validazione statistica: demo execution protetta con massimo rischio
 massimo numero di trade, blocchi giornalieri, blocco drawdown, blocco news,
 blocco spread, fase report-only prima dell'execution. Live reale **solo** con
 approvazione manuale esplicita.
+
+Già disponibile **solo la fase report-only** (additivo, NON arma l'execution):
+`src/analysis/v51_demo_readiness.py` + `scripts/run_v51_demo_readiness_report.py`
+→ simula l'equity giornaliera dei candidati ACCEPTED applicando cap trade,
+daily-loss lock e drawdown lock, e produce una checklist read-only dei flag di
+sicurezza (`allow_real_live`, `demo_only`, `allow_demo_execution`,
+`execution_enabled`, `max_open_positions`). Output in
+`reports/diagnostics/v51_demo_readiness_*`. NON modifica config/flag, NON importa
+codice di execution, NON invia ordini. **Armare la demo execution resta una
+decisione separata, esplicita e manuale**: i flag in `config/strategy_v51.yaml` e
+il codice in `src/execution/` non vanno toccati senza autorizzazione.
 
 ---
 

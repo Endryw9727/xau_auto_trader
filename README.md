@@ -271,6 +271,28 @@ expectancy teorica positiva e campione sufficiente. Le metriche sono teoriche
 sull'intero decision log storico: un risultato positivo e un invito a rivedere un
 filtro, mai a indebolirlo.
 
+## V51 Demo Readiness (report-only)
+
+Report di FASE 3 in sola lettura: la fase report-only che precede qualsiasi demo
+execution. Simula come si comporterebbero i guardrail protettivi (cap trade
+giornaliero, daily-loss lock, drawdown lock) sui candidati ACCEPTED e stampa una
+checklist di sicurezza read-only sui flag di config. NON abilita l'execution,
+NON modifica config o flag e NON invia ordini. Armare la demo resta una
+decisione separata, esplicita e manuale fuori da questo report.
+
+    python scripts/run_v51_demo_readiness_report.py
+    python scripts/run_v51_demo_readiness_report.py --candles 800 --daily-loss-limit-r 2 --max-drawdown-r 4
+
+Output:
+- reports/diagnostics/v51_demo_readiness_equity.csv
+- reports/diagnostics/v51_demo_readiness_checklist.csv
+- reports/diagnostics/v51_demo_readiness_latest.txt
+
+La checklist verifica che `allow_real_live=false`, `demo_only=true`,
+`allow_demo_execution=false`, `execution_enabled=false` e `max_open_positions=1`.
+I budget `daily_loss_limit_r` e `max_drawdown_r` sono parametri del report, non
+config di rischio: servono solo a misurare l'effetto teorico dei lock.
+
 ## MT5 Multi-Timeframe CSV Update
 
 Lo script aggiorna in modalita read-only i CSV multi-timeframe usati dal report
