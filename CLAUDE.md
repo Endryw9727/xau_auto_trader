@@ -139,6 +139,8 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Tassonomia rifiuti V51 | `src/analysis/v51_rejection_taxonomy.py`, `scripts/run_v51_rejection_diagnostics.py` |
 | Market structure sessioni | `src/analysis/session_structure.py`, `src/analysis/v51_structure_context.py`, `scripts/run_v51_market_structure_diagnostics.py` |
 | Validazione esiti V51 | `src/analysis/v51_outcome_simulation.py`, `scripts/run_v51_outcome_diagnostics.py` |
+| Quality review V51 | `src/analysis/v51_quality_review.py`, `scripts/run_v51_quality_review.py` |
+| Validazione esiti V51 | `src/analysis/v51_outcome_simulation.py`, `scripts/run_v51_outcome_diagnostics.py` |
 | Ciclo demo live-safe | `scripts/run_v51_live_safe_cycle.py` |
 | Contesto MTF | `scripts/run_v51_mtf_context_report.py` |
 | Shadow monitor | `src/control_room/shadow_monitor.py` |
@@ -218,8 +220,16 @@ Già disponibile (additivo, read-only, backtest/research):
 candela ambigua) e produce performance per sessione, per direzione e curva dello
 score minimo (`win_rate`, `avg_r`, `total_r`, `expectancy`). Metriche teoriche
 sull'intero decision log, non sui soli candidati live gated. Output in
-`reports/diagnostics/v51_outcomes*` e `v51_performance_*`. Restano da aggiungere:
-qualità RR dedicata, falsi negativi dei quality guard e review dei rifiuti.
+`reports/diagnostics/v51_outcomes*` e `v51_performance_*`.
+
+Quality review (qualità RR, falsi negativi dei quality guard, review dei
+rifiuti), additivo e read-only: `src/analysis/v51_quality_review.py` +
+`scripts/run_v51_quality_review.py` → riusa la simulazione esiti e la tassonomia
+per misurare performance per bucket RR, quanti candidati bloccati da filtri
+discrezionali avrebbero teoricamente vinto e quali categorie di rifiuto
+meritano review (`review_flag` solo per filtri non safety-critical con
+expectancy positiva e campione ≥5). Output in `reports/diagnostics/v51_quality_*`.
+Un risultato positivo è un invito a rivedere un filtro, mai a indebolirlo.
 
 ### FASE 3 — Demo controllata
 Solo dopo la validazione statistica: demo execution protetta con massimo rischio,

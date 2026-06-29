@@ -249,6 +249,28 @@ Le metriche (`win_rate`, `avg_r`, `total_r`, `expectancy`) sono teoriche e
 calcolate sull'intero decision log storico, non sui soli candidati live gated:
 servono come segnale di ricerca, non come metrica di produzione.
 
+## V51 Quality Review
+
+Report read-only di FASE 2 che misura la qualita dei candidati V51: performance
+per bucket di risk/reward, falsi negativi dei quality guard (candidati bloccati
+dai filtri discrezionali che in teoria avrebbero vinto) e review dei rifiuti
+(quali categorie di rifiuto sarebbero state profittevoli e meritano una
+revisione umana). Non modifica config e non invia ordini.
+
+    python scripts/run_v51_quality_review.py
+    python scripts/run_v51_quality_review.py --candles 800 --horizon 32
+
+Output:
+- reports/diagnostics/v51_quality_rr.csv
+- reports/diagnostics/v51_quality_rejection_review.csv
+- reports/diagnostics/v51_quality_false_negatives.csv
+- reports/diagnostics/v51_quality_review_latest.txt
+
+Un `review_flag` viene alzato solo per categorie non safety-critical con
+expectancy teorica positiva e campione sufficiente. Le metriche sono teoriche
+sull'intero decision log storico: un risultato positivo e un invito a rivedere un
+filtro, mai a indebolirlo.
+
 ## MT5 Multi-Timeframe CSV Update
 
 Lo script aggiorna in modalita read-only i CSV multi-timeframe usati dal report
