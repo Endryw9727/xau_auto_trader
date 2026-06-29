@@ -181,12 +181,22 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 
 ## 9. Roadmap tecnica (3 fasi)
 
-### FASE 1 — Diagnostica migliorata
+### FASE 1 — Diagnostica migliorata — IN CORSO
 Categorizzare i segnali rifiutati distinguendo: score basso, quality guard,
 sessione bloccata, Asia accumulation, London manipulation, New York reversal,
 liquidity sweep, MTF non allineato, distanza da supporto/resistenza, setup
 long/short non confermato. Modulo **additivo** che legge il decision log V51, non
 tocca i gate.
+
+Già disponibile (additivo, read-only):
+`src/analysis/v51_rejection_taxonomy.py` + `scripts/run_v51_rejection_diagnostics.py`
+→ categorizza i rifiuti (`score_low`, `quality_guard`, `session_blocked`,
+`mtf_misaligned`, `rr_low`, `freshness_time`, …) con una `disposition`
+(`safety_critical` / `review_candidate` / `threshold` / `informational`) e indica
+il top filtro bloccante. Output in `reports/diagnostics/v51_rejection_taxonomy*`.
+Restano da aggiungere le categorie market-structure (Asia accumulation, London
+manipulation, NY reversal, liquidity sweep, distance-from-level), che dipendono
+dall'arricchimento della session analysis previsto in FASE 2.
 
 ### FASE 2 — Validazione quantitativa
 Report statistici per: performance teorica per sessione e per direzione, score

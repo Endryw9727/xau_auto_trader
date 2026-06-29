@@ -182,6 +182,28 @@ Quando `use_mtf_context_filter` e `true`, un BUY passa solo con
 `mtf_final_bias`, `mtf_filter_enabled`, `mtf_filter_passed` e
 `mtf_filter_reason`.
 
+## V51 Rejection Diagnostics
+
+Report diagnostico read-only che raggruppa i segnali V51 rifiutati in categorie
+stabili, cosi e immediato vedere quale filtro blocca di piu e se quel blocco e
+safety-critical o una soglia regolabile da rivedere. Non modifica config, non
+abbassa filtri e non invia ordini.
+
+    python scripts/run_v51_rejection_diagnostics.py
+    python scripts/run_v51_rejection_diagnostics.py --candles 400
+    python scripts/run_v51_rejection_diagnostics.py --reasons-csv reports/demo_execution/v51_demo_execution_log.csv
+
+Output:
+- reports/diagnostics/v51_rejection_taxonomy.csv
+- reports/diagnostics/v51_rejection_taxonomy_latest.txt
+
+Categorie: `score_low`, `score_gap_low`, `trend_weak`, `setup_unconfirmed`,
+`quality_guard`, `rr_low`, `spread_slippage`, `session_blocked`, `daily_limit`,
+`mtf_misaligned`, `liquidity_sweep`, `distance_from_level`, `freshness_time`,
+`duplicate`, `no_directional_score`, `accepted`, `other`. Ogni categoria ha una
+`disposition`: `safety_critical`, `review_candidate`, `threshold` o
+`informational`.
+
 ## MT5 Multi-Timeframe CSV Update
 
 Lo script aggiorna in modalita read-only i CSV multi-timeframe usati dal report
