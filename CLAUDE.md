@@ -138,6 +138,7 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Diagnostica V51 | `scripts/run_v51_diagnostic_report.py` |
 | Tassonomia rifiuti V51 | `src/analysis/v51_rejection_taxonomy.py`, `scripts/run_v51_rejection_diagnostics.py` |
 | Market structure sessioni | `src/analysis/session_structure.py`, `src/analysis/v51_structure_context.py`, `scripts/run_v51_market_structure_diagnostics.py` |
+| Validazione esiti V51 | `src/analysis/v51_outcome_simulation.py`, `scripts/run_v51_outcome_diagnostics.py` |
 | Ciclo demo live-safe | `scripts/run_v51_live_safe_cycle.py` |
 | Contesto MTF | `scripts/run_v51_mtf_context_report.py` |
 | Shadow monitor | `src/control_room/shadow_monitor.py` |
@@ -205,11 +206,20 @@ reversal, liquidity sweep, distance-from-level), additivo e read-only:
 calcola `manipulation_label`, `structure_alignment` (aligned/counter/neutral) e
 distanza dal livello chiave. Output in `reports/diagnostics/v51_market_structure_*`.
 
-### FASE 2 — Validazione quantitativa
+### FASE 2 — Validazione quantitativa — IN CORSO
 Report statistici per: performance teorica per sessione e per direzione, score
 minimo efficace, qualità RR, distanza dai livelli chiave, presenza/assenza di
 liquidity sweep, comportamento Asia → London → New York, segnali rifiutati
 meritevoli di review, falsi negativi dei quality guard.
+
+Già disponibile (additivo, read-only, backtest/research):
+`src/analysis/v51_outcome_simulation.py` + `scripts/run_v51_outcome_diagnostics.py`
+→ simula l'esito teorico dei candidati (walk-forward, no lookahead, stop-first su
+candela ambigua) e produce performance per sessione, per direzione e curva dello
+score minimo (`win_rate`, `avg_r`, `total_r`, `expectancy`). Metriche teoriche
+sull'intero decision log, non sui soli candidati live gated. Output in
+`reports/diagnostics/v51_outcomes*` e `v51_performance_*`. Restano da aggiungere:
+qualità RR dedicata, falsi negativi dei quality guard e review dei rifiuti.
 
 ### FASE 3 — Demo controllata
 Solo dopo la validazione statistica: demo execution protetta con massimo rischio,

@@ -226,6 +226,29 @@ Output:
 (contesto ribassista), `london_sweep_both_reclaimed`. `structure_alignment`:
 `aligned`, `counter`, `neutral`.
 
+## V51 Outcome Diagnostics (validazione teorica)
+
+Report read-only di validazione quantitativa: simula l'esito teorico dei
+candidati V51 camminando in avanti sulle candele chiuse successive (nessun
+lookahead; su candela ambigua si assume lo stop per primo, scelta conservativa)
+e misura la performance per sessione, per direzione e al variare dello score
+minimo. E backtest/research: non invia ordini e non modifica config.
+
+    python scripts/run_v51_outcome_diagnostics.py
+    python scripts/run_v51_outcome_diagnostics.py --candles 800 --max-horizon 32
+    python scripts/run_v51_outcome_diagnostics.py --accepted-only
+
+Output:
+- reports/diagnostics/v51_outcomes.csv
+- reports/diagnostics/v51_performance_by_session.csv
+- reports/diagnostics/v51_performance_by_side.csv
+- reports/diagnostics/v51_performance_score_curve.csv
+- reports/diagnostics/v51_outcome_latest.txt
+
+Le metriche (`win_rate`, `avg_r`, `total_r`, `expectancy`) sono teoriche e
+calcolate sull'intero decision log storico, non sui soli candidati live gated:
+servono come segnale di ricerca, non come metrica di produzione.
+
 ## MT5 Multi-Timeframe CSV Update
 
 Lo script aggiorna in modalita read-only i CSV multi-timeframe usati dal report
