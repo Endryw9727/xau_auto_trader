@@ -136,6 +136,8 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Live broker protetto | `src/execution/live_broker.py` |
 | Freshness dati | `src/market_data/data_freshness.py` |
 | Diagnostica V51 | `scripts/run_v51_diagnostic_report.py` |
+| Tassonomia rifiuti V51 | `src/analysis/v51_rejection_taxonomy.py`, `scripts/run_v51_rejection_diagnostics.py` |
+| Market structure sessioni | `src/analysis/session_structure.py`, `src/analysis/v51_structure_context.py`, `scripts/run_v51_market_structure_diagnostics.py` |
 | Ciclo demo live-safe | `scripts/run_v51_live_safe_cycle.py` |
 | Contesto MTF | `scripts/run_v51_mtf_context_report.py` |
 | Shadow monitor | `src/control_room/shadow_monitor.py` |
@@ -194,9 +196,14 @@ Già disponibile (additivo, read-only):
 `mtf_misaligned`, `rr_low`, `freshness_time`, …) con una `disposition`
 (`safety_critical` / `review_candidate` / `threshold` / `informational`) e indica
 il top filtro bloccante. Output in `reports/diagnostics/v51_rejection_taxonomy*`.
-Restano da aggiungere le categorie market-structure (Asia accumulation, London
-manipulation, NY reversal, liquidity sweep, distance-from-level), che dipendono
-dall'arricchimento della session analysis previsto in FASE 2.
+
+Market-structure context (Asia accumulation, London manipulation/sweep, NY
+reversal, liquidity sweep, distance-from-level), additivo e read-only:
+`src/analysis/session_structure.py` (modello sessioni allineato a `v50_session`)
++ `src/analysis/v51_structure_context.py` + `scripts/run_v51_market_structure_diagnostics.py`
+→ per giorno calcola range Asia, sweep/lato/reclaim, direzione NY; per candidato
+calcola `manipulation_label`, `structure_alignment` (aligned/counter/neutral) e
+distanza dal livello chiave. Output in `reports/diagnostics/v51_market_structure_*`.
 
 ### FASE 2 — Validazione quantitativa
 Report statistici per: performance teorica per sessione e per direzione, score

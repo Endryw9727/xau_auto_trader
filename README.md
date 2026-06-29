@@ -204,6 +204,28 @@ Categorie: `score_low`, `score_gap_low`, `trend_weak`, `setup_unconfirmed`,
 `disposition`: `safety_critical`, `review_candidate`, `threshold` o
 `informational`.
 
+## V51 Market Structure Diagnostics
+
+Report read-only che unisce i candidati V51 al market structure per sessione
+(Asia accumulation, London manipulation/sweep, New York reversal). Per ogni
+giorno calcola il range Asia, se la liquidita Asia e stata spazzata (sweep) e da
+quale lato, se e stata reclaimata, la direzione di New York; per ogni candidato
+calcola la distanza dal livello chiave piu vicino e se la direzione e allineata
+o contraria allo sweep-reclaim. Non modifica config e non invia ordini.
+
+    python scripts/run_v51_market_structure_diagnostics.py
+    python scripts/run_v51_market_structure_diagnostics.py --candles 600
+
+Output:
+- reports/diagnostics/v51_market_structure_context.csv
+- reports/diagnostics/v51_market_structure_summary.csv
+- reports/diagnostics/v51_market_structure_latest.txt
+
+`manipulation_label`: `no_sweep`, `sweep_not_reclaimed`,
+`london_sweep_low_reclaimed` (contesto rialzista), `london_sweep_high_reclaimed`
+(contesto ribassista), `london_sweep_both_reclaimed`. `structure_alignment`:
+`aligned`, `counter`, `neutral`.
+
 ## MT5 Multi-Timeframe CSV Update
 
 Lo script aggiorna in modalita read-only i CSV multi-timeframe usati dal report
