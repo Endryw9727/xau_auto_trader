@@ -80,7 +80,10 @@ async def instruments(user: dict = Depends(get_current_user)):
     ext = await proxy("GET", "/api/instruments")
     base = ext or mock_data.instruments()
     uploaded = await db.uploaded_instruments.find({}, {"_id": 0}).to_list(200)
-    base["instruments"] = base.get("instruments", []) + uploaded
+    merged = {i["symbol"]: i for i in base.get("instruments", [])}
+    for u in uploaded:
+        merged[u["symbol"]] = u  # uploaded/fetched copy overrides bundled
+    base["instruments"] = list(merged.values())
     return base
 
 

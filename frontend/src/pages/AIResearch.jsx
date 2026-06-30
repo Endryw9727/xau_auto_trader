@@ -149,7 +149,7 @@ export default function AIResearch() {
                 className="w-full bg-term-bg border border-term-border px-2 py-1.5 font-mono text-[11px] text-term-text outline-none focus:border-keep">
                 <option value="">— none —</option>
                 {(runsData?.runs || []).map((r) => (
-                  <option key={r.id} value={r.id}>{r.run_type} · {r.created_at.slice(5, 16).replace("T", " ")}</option>
+                  <option key={r.id} value={r.id}>{`${r.run_type} · ${r.created_at.slice(5, 16).replace("T", " ")}`}</option>
                 ))}
               </select>
               {contextData ? (
