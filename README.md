@@ -407,6 +407,28 @@ quella pre-registrata, NON va trattato come edge confermato (sarebbe post-hoc):
 e una nuova ipotesi da validare su dati indipendenti. Solo ricerca: nessun ordine
 inviato.
 
+## Research API (per la console web)
+
+Strato API read-only (Starlette) che espone la pipeline di validazione come JSON,
+così la Research Console (es. costruita su Emergent) passa dai dati mock ai dati
+veri e validati. Non reimplementa la statistica: chiama il codice esistente.
+Nessun endpoint arma l'esecuzione; `/api/health` riporta `live_armed: false`.
+
+    python scripts/serve_research_api.py --host 0.0.0.0 --port 8000
+
+Poi imposta `API_BASE_URL` della console su questo server. Per richiedere un
+token, esporta `RESEARCH_API_TOKEN` (allora ogni richiesta deve avere
+`Authorization: Bearer <token>`). CORS configurabile con `RESEARCH_API_CORS`.
+
+Endpoint principali:
+- `GET /api/health`, `GET /api/instruments`
+- `POST /api/edge/session-scan`, `/api/edge/ny-conditional`, `/api/edge/overnight`
+- `POST /api/edge/significance-audit` (verdetto: `mtc_robust`)
+- `GET /api/bot/rejection-taxonomy`, `/api/bot/market-structure`,
+  `/api/bot/quality-review`, `/api/bot/demo-readiness`
+
+Solo ricerca/diagnostica: l'API non puo inviare ordini ne armare la demo.
+
 ## V51 Demo Protective Guardrails
 
 Il layer di esecuzione demo V51 include guardrail protettivi opt-in, tutti
