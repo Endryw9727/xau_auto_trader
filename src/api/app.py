@@ -30,6 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.api import research_service as service
+from src.api.research_service import _json_safe
 
 
 _TOKEN_ENV = "RESEARCH_API_TOKEN"
@@ -64,7 +65,8 @@ async def _call(request: Request, func, *, allow_body: bool = False):
         result = await run_in_threadpool(lambda: func(**overrides))
     except Exception as exc:  # noqa: BLE001 - never leak a stack trace to the UI
         return JSONResponse({"status": "ERROR", "reason": str(exc), "live_armed": False}, status_code=500)
-    return JSONResponse(result)
+    # Strict JSON: NaN/Infinity are not JSON-compliant and Starlette refuses them.
+    return JSONResponse(_json_safe(result))
 
 
 async def health(request: Request):

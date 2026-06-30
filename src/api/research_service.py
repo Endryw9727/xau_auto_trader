@@ -13,6 +13,7 @@ can prove the system is disarmed.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import tempfile
 from typing import Any
@@ -213,5 +214,19 @@ def _read_records(path: Path) -> list[dict[str, Any]]:
     if not path.exists() or path.stat().st_size == 0:
         return []
     frame = pd.read_csv(path)
-    frame = frame.where(pd.notnull(frame), None)
-    return frame.to_dict(orient="records")
+    records = frame.to_dict(orient="records")
+    # Replacing NaN with None on a float column re-introduces NaN (the column
+    # stays float), so clean per value: any non-finite float -> None. This keeps
+    # the payload strictly JSON-compliant (no NaN/Infinity tokens).
+    return [_json_safe(record) for record in records]
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively replace NaN/Infinity floats with None for strict JSON."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value

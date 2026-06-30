@@ -1,3 +1,5 @@
+import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -93,6 +95,36 @@ def test_overrides_are_applied(tmp_path):
     out = service.significance_audit(config_path=_config(tmp_path), t_stat_threshold=99.0)
     assert out["walk_forward_robust"] == 0
     assert out["mtc_survivors"] == 0
+
+
+def test_json_safe_replaces_non_finite():
+    cleaned = service._json_safe({"a": float("nan"), "b": float("inf"), "c": 1.5, "d": [float("nan"), 2]})
+    assert cleaned["a"] is None
+    assert cleaned["b"] is None
+    assert cleaned["c"] == 1.5
+    assert cleaned["d"] == [None, 2]
+
+
+def test_significance_audit_is_strict_json(tmp_path):
+    # Starlette's JSONResponse uses allow_nan=False; the payload must survive it.
+    out = service.significance_audit(config_path=_config(tmp_path))
+    json.dumps(out, allow_nan=False)  # must not raise
+    for row in out["rows"]:
+        for value in row.values():
+            assert not (isinstance(value, float) and not math.isfinite(value))
+
+
+def test_session_scan_is_strict_json(tmp_path):
+    out = service.session_scan(config_path=_config(tmp_path))
+    json.dumps(out, allow_nan=False)  # must not raise
+
+
+def test_read_records_has_no_nan(tmp_path):
+    csv = tmp_path / "x.csv"
+    pd.DataFrame({"a": [1.0, None], "b": ["x", "y"]}).to_csv(csv, index=False)
+    records = service._read_records(csv)
+    assert records[1]["a"] is None  # NaN became None, not float('nan')
+    json.dumps(records, allow_nan=False)
 
 
 def test_service_has_no_execution_imports():
