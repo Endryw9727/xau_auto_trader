@@ -127,6 +127,23 @@ def test_read_records_has_no_nan(tmp_path):
     json.dumps(records, allow_nan=False)
 
 
+def test_cache_bypassed_for_custom_config(tmp_path):
+    custom = tmp_path / "edge_lab.yaml"
+    assert service._cache_key("x", custom, {}) is None
+    service._cache_put("x", custom, {}, {"a": 1})
+    assert service._cache_get("x", custom, {}) is None  # never cached for custom configs
+
+
+def test_cache_roundtrip_for_default_config():
+    service._cache_put("unit_test_marker", service.DEFAULT_EDGE_CONFIG, {}, {"ok": 1})
+    assert service._cache_get("unit_test_marker", service.DEFAULT_EDGE_CONFIG, {}) == {"ok": 1}
+
+
+def test_warm_cache_is_callable():
+    # Best-effort warmer must never raise even if data is missing.
+    service.warm_cache()
+
+
 def test_service_has_no_execution_imports():
     source = Path("src/api/research_service.py").read_text(encoding="utf-8")
     assert "order_send" not in source

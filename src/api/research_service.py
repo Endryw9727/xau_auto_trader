@@ -16,6 +16,8 @@ from __future__ import annotations
 import math
 from pathlib import Path
 import tempfile
+import threading
+import time
 from typing import Any
 
 import pandas as pd
@@ -37,6 +39,57 @@ API_VERSION = "1.0.0"
 
 # Overridable top-level keys accepted by the edge endpoints.
 _CONFIG_OVERRIDE_KEYS = ("min_trades", "oos_fraction", "t_stat_threshold")
+
+# Heavy endpoints re-run the full edge computation, which is slow on real data
+# and can exceed an HTTP client / tunnel timeout. Cache results (only for the
+# default config) keyed on the data files' modification times, so the first call
+# computes and every later call is instant until the data changes.
+_CACHE_TTL_SECONDS = 900
+_cache: dict[Any, tuple[float, Any]] = {}
+_cache_lock = threading.Lock()
+
+
+def _data_signature() -> tuple:
+    raw = PROJECT_ROOT / "data" / "raw"
+    if not raw.exists():
+        return ()
+    return tuple(sorted((path.name, int(path.stat().st_mtime)) for path in raw.glob("*.csv")))
+
+
+def _cache_key(name: str, config_path: str | Path, overrides: dict[str, Any]) -> Any | None:
+    # Only cache the default config (tests pass temporary configs and must not
+    # share cached results).
+    if Path(config_path) != DEFAULT_EDGE_CONFIG:
+        return None
+    return (name, _data_signature(), tuple(sorted((overrides or {}).items())))
+
+
+def _cache_get(name: str, config_path: str | Path, overrides: dict[str, Any]) -> Any | None:
+    key = _cache_key(name, config_path, overrides)
+    if key is None:
+        return None
+    with _cache_lock:
+        hit = _cache.get(key)
+    if hit is not None and (time.time() - hit[0]) < _CACHE_TTL_SECONDS:
+        return hit[1]
+    return None
+
+
+def _cache_put(name: str, config_path: str | Path, overrides: dict[str, Any], result: Any) -> None:
+    key = _cache_key(name, config_path, overrides)
+    if key is None:
+        return
+    with _cache_lock:
+        _cache[key] = (time.time(), result)
+
+
+def warm_cache() -> None:
+    """Pre-compute the heavy default-config endpoints so the first UI call is fast."""
+    for func in (significance_audit, session_scan, ny_conditional, overnight):
+        try:
+            func()
+        except Exception:  # noqa: BLE001 - warming is best effort
+            pass
 
 
 def health() -> dict[str, Any]:
@@ -68,47 +121,65 @@ def list_instruments(config_path: str | Path = DEFAULT_EDGE_CONFIG) -> dict[str,
 
 def session_scan(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -> dict[str, Any]:
     """Run the multi-instrument session edge scan and return verdicts + detail."""
+    cached = _cache_get("session_scan", config_path, overrides)
+    if cached is not None:
+        return cached
     with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
         run_session_edge_lab(config_path=cfg, output_dir=out)
-        return {
+        result = {
             "status": "OK",
             "live_armed": False,
             "verdicts": _read_records(Path(out) / "session_edge_verdicts.csv"),
             "detail": _read_records(Path(out) / "session_edge_detail.csv"),
         }
+    _cache_put("session_scan", config_path, overrides, result)
+    return result
 
 
 def ny_conditional(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -> dict[str, Any]:
     """Run the NY conditional edge scan."""
+    cached = _cache_get("ny_conditional", config_path, overrides)
+    if cached is not None:
+        return cached
     with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
         run_ny_conditional_edge(config_path=cfg, output_dir=out)
-        return {
+        result = {
             "status": "OK",
             "live_armed": False,
             "verdicts": _read_records(Path(out) / "ny_conditional_verdicts.csv"),
             "detail": _read_records(Path(out) / "ny_conditional_detail.csv"),
         }
+    _cache_put("ny_conditional", config_path, overrides, result)
+    return result
 
 
 def overnight(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -> dict[str, Any]:
     """Run the pre-registered overnight/intraday anomaly test."""
+    cached = _cache_get("overnight", config_path, overrides)
+    if cached is not None:
+        return cached
     with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
         run_overnight_anomaly(config_path=cfg, output_dir=out)
         rows = _read_records(Path(out) / "overnight_anomaly_audit.csv")
-        return {
+        result = {
             "status": "OK",
             "live_armed": False,
             "rows": rows,
             "mtc_survivors": int(sum(1 for r in rows if r.get("mtc_robust"))),
         }
+    _cache_put("overnight", config_path, overrides, result)
+    return result
 
 
 def significance_audit(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -> dict[str, Any]:
     """Run the multiple-testing significance audit (the headline verdict)."""
+    cached = _cache_get("significance_audit", config_path, overrides)
+    if cached is not None:
+        return cached
     with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
         run_edge_significance_audit(config_path=cfg, output_dir=out)
         rows = _read_records(Path(out) / "edge_significance_audit.csv")
-        return {
+        result = {
             "status": "OK",
             "live_armed": False,
             "family_size": len(rows),
@@ -116,6 +187,8 @@ def significance_audit(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overr
             "mtc_survivors": int(sum(1 for r in rows if r.get("mtc_robust"))),
             "rows": rows,
         }
+    _cache_put("significance_audit", config_path, overrides, result)
+    return result
 
 
 def bot_rejection_taxonomy(*, candles: int = 200) -> dict[str, Any]:

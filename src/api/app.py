@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+import threading
 
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
@@ -131,4 +132,10 @@ middleware = [
     )
 ]
 
-app = Starlette(routes=routes, middleware=middleware)
+def _warm_cache_in_background() -> None:
+    # Pre-compute the heavy endpoints so the first UI request is served from
+    # cache and does not exceed the client / tunnel timeout.
+    threading.Thread(target=service.warm_cache, daemon=True).start()
+
+
+app = Starlette(routes=routes, middleware=middleware, on_startup=[_warm_cache_in_background])
