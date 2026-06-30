@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Play, Loader2, Filter, Gavel } from "lucide-react";
 import api from "@/lib/api";
-import { StatTile, RobustCell, BoolCell, PValue, TStat, Chip, Panel } from "@/components/widgets";
+import { StatTile, RobustCell, BoolCell, PValue, TStat, Chip, Panel, OfflineState } from "@/components/widgets";
 
 const DEFAULTS = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY"];
 
@@ -11,17 +11,23 @@ export default function SignificanceAudit() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [onlyRobust, setOnlyRobust] = useState(false);
+  const [offline, setOffline] = useState(false);
 
   const { data: instData } = useQuery({
     queryKey: ["instruments"],
     queryFn: async () => (await api.get("/instruments")).data,
+    retry: false,
   });
 
   const run = async (symbols) => {
     setLoading(true);
+    setOffline(false);
     try {
       const { data } = await api.post("/edge/significance-audit", { symbols });
       setResult(data);
+    } catch (e) {
+      setResult(null);
+      setOffline(true);
     } finally {
       setLoading(false);
     }
@@ -109,6 +115,9 @@ export default function SignificanceAudit() {
 
       {/* hero table */}
       <Panel title={`Hypothesis Family · ${rows.length} combos`} testId="audit-table-panel">
+        {offline ? (
+          <OfflineState />
+        ) : (
         <div className="overflow-auto max-h-[calc(100vh-440px)]">
           <table className="term-table" data-testid="significance-table">
             <thead>
@@ -142,6 +151,7 @@ export default function SignificanceAudit() {
             </tbody>
           </table>
         </div>
+        )}
       </Panel>
     </div>
   );

@@ -19,11 +19,14 @@ const NAV = [
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [safety, setSafety] = useState(null);
+  const [health, setHealth] = useState(null);
 
   useEffect(() => {
-    api.get("/safety").then((r) => setSafety(r.data)).catch(() => {});
-    // run once on mount; `api` is a stable module singleton
+    const check = () => api.get("/health").then((r) => setHealth(r.data)).catch(() => setHealth({ external_api_reachable: false }));
+    check();
+    const id = setInterval(check, 30000);
+    return () => clearInterval(id);
+    // poll API status; `api` is a stable module singleton
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -76,10 +79,10 @@ export default function Layout() {
 
           <div className="px-4 py-3 border-t border-term-border">
             <div className="flex items-center gap-2 mb-2 font-mono text-[10px] tracking-wider">
-              {safety?.external_api ? (
-                <span className="flex items-center gap-1 text-keep"><Wifi size={11} /> EXTERNAL API</span>
+              {health?.external_api_reachable ? (
+                <span className="flex items-center gap-1 text-keep" data-testid="api-status"><Wifi size={11} /> API ONLINE</span>
               ) : (
-                <span className="flex items-center gap-1 text-term-dim"><WifiOff size={11} /> MOCK MODE</span>
+                <span className="flex items-center gap-1 text-exclude" data-testid="api-status"><WifiOff size={11} /> API OFFLINE</span>
               )}
             </div>
             <div className="flex items-center justify-between">

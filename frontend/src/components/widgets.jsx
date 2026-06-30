@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Check, X, Zap } from "lucide-react";
+import { Check, X, Zap, WifiOff } from "lucide-react";
 
 export function Panel({ title, right, children, className, testId }) {
   return (
@@ -104,5 +104,81 @@ export function Chip({ active, onClick, children, testId }) {
     >
       {children}
     </button>
+  );
+}
+
+export function OfflineState({ message = "API OFFLINE — nessun dato" }) {
+  return (
+    <div data-testid="api-offline" className="flex flex-col items-center justify-center gap-2 py-14 px-4 text-center">
+      <WifiOff size={28} strokeWidth={1.5} className="text-exclude" />
+      <div className="font-mono text-sm text-exclude tracking-wider">{message}</div>
+      <div className="font-mono text-[11px] text-term-dim max-w-md">
+        L'API esterna non è raggiungibile. Non viene mostrato alcun dato fittizio.
+      </div>
+    </div>
+  );
+}
+
+// Generic renderer that displays EXACTLY the rows returned by the external API,
+// with no app-side computation. Column set is derived from the data itself.
+const HIGH_PREC = ["avg_r", "total_r", "expectancy", "mean_net_pct", "daily_r", "cumulative_r", "drawdown_r", "sharpe"];
+const RIGHT_HINTS = ["t_stat", "p_value", "count", "pct", "share", "rows", "trades", "wins", "rate",
+  "avg", "total", "expectancy", "candidates", "accepted", "rejected", "buy", "sell", "_r", "cost", "net", "drawdown", "cumulative", "daily"];
+
+function isNumericKey(k) {
+  const lk = k.toLowerCase();
+  return RIGHT_HINTS.some((h) => lk.includes(h));
+}
+
+function renderCell(key, v, highlightCol) {
+  const lk = key.toLowerCase();
+  if (key === highlightCol || lk === "mtc_robust" || lk === "robust_edge") return <RobustCell value={!!v} />;
+  if (lk === "verdict") return <Verdict value={v} />;
+  if (lk.includes("t_stat")) return <TStat value={typeof v === "number" ? v : Number(v)} />;
+  if (lk === "p_value") return <PValue value={typeof v === "number" ? v : Number(v)} />;
+  if (typeof v === "boolean") return <BoolCell value={v} />;
+  if (typeof v === "number") {
+    const digits = HIGH_PREC.includes(lk) ? 4 : Number.isInteger(v) ? 0 : 2;
+    return <Num value={v} digits={digits} />;
+  }
+  if (v == null) return <span className="text-term-dim">—</span>;
+  return <span className="text-term-muted">{String(v)}</span>;
+}
+
+export function ApiTable({ rows, columns, highlightCol = "mtc_robust", testId, maxHeight = "60vh" }) {
+  if (!rows || rows.length === 0) {
+    return <div className="p-4 text-term-dim font-mono text-[12px]">No rows.</div>;
+  }
+  const cols = columns || Object.keys(rows[0]);
+  const headCls = (c) => (c === highlightCol ? "text-center col-robust" : isNumericKey(c) ? "text-right" : "");
+  return (
+    <div className="overflow-auto" style={{ maxHeight }}>
+      <table className="term-table" data-testid={testId}>
+        <thead>
+          <tr>
+            {cols.map((c) => (
+              <th
+                key={c}
+                className={headCls(c)}
+                style={c === highlightCol ? { background: "rgba(0,255,157,0.1)", color: "#00FF9D" } : undefined}
+              >
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className={row[highlightCol] ? "bg-robust/[0.04]" : ""}>
+              {cols.map((c) => (
+                <td key={c} className={c === highlightCol ? "text-center col-robust" : isNumericKey(c) ? "text-right" : ""}>
+                  {renderCell(c, row[c], highlightCol)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

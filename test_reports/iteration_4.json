@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration 4 validates the new READ-ONLY contract: all mock/synthetic data removed, external-API-only data flow, and 'API OFFLINE — nessun dato' state while the external API is unreachable. Verified via curl that the external API_BASE_URL (cloudflare tunnel) is DOWN (HTTP 000 / connect timeout). Rewrote /app/backend/tests/test_research_console.py to the new contract (offline-aware: data endpoints expected 503 with detail='API OFFLINE — nessun dato'; /api/data/synthetic, /api/data/upload-csv, /api/data/fetch-yahoo expected 404/405; /api/health exposes external_api_reachable; auth/safety/no-arm tests retained; AI config test retained). Backend pytest: 25/25 PASSED (203s; long runtime is expected because edge endpoints honor the 45s upstream timeout). Frontend e2e via Playwright on the external HTTPS preview URL: login OK → sidebar shows 'API OFFLINE' (data-testid=api-status) → SignificanceAudit auto-runs and renders OfflineState (data-testid=api-offline) with counters Family Size '—' and MTC Survivors '—' and NO invented combos in DOM → Data page renders OfflineState only (no upload/synthetic/yahoo UI; no TESTSYN*/TEST_CSV strings) → Edge Lab shows 3 tabs (session/ny/overnight), RUN triggers OfflineState (~45s due to upstream timeout) with no invented combos → Bot Diagnostics renders all 4 report panels (rejection-panel, structure-panel, quality-panel, demo-panel) each containing api-offline → Safety banner 'allow_real_live = false' / 'NO REAL ORDERS' present → Logout redirects to /login. Cookie auth (HttpOnly+Secure) intact (server-set cookie validated, logout clears it). No invented combos (HIGH_VOL/LOW_VOL/TREND_UP/BREAKOUT/MEAN_REVERSION) appear anywhere. Product behavior matches user demand.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": { "ui_bugs": [], "integration_issues": [], "design_issues": [] },
+  "test_report_links": [
+    "/app/backend/tests/test_research_console.py",
+    "/app/test_reports/pytest/iter_4_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "analysis.py is now a clean read-only proxy: proxy() returns None on any failure/non-200 and _require() raises 503 with the exact offline message — no synthetic fallback path exists. Good.",
+    "/api/health is a sensible probe: on unreachable upstream it returns {status:'offline', live_armed:false, external_api_reachable:false} (200), which lets the sidebar poll cheaply without authenticating. Frontend Layout.jsx polls every 30s — fine.",
+    "Edge endpoints persist a run on success only (persist_run is after _require). When offline no junk run is created — correct.",
+    "Suggestion: persist a 'live_armed=false' guarantee on the /api/health offline branch too (currently only set when upstream is reachable) — already done in code (line 64). Good.",
+    "Hard safety constraint preserved: /api/safety returns immutable {live_armed:false, allow_real_live:false, read_only:true} and there is no arming route (4x 404/405 verified)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_research_console.py (full rewrite to the new offline-aware read-only contract; 25 tests)"
+  ],
+  "success_rate": { "backend": "100% (25/25)", "frontend": "100% (login, sidebar status, Significance Audit, Data, Edge Lab run, Bot Diagnostics, logout)" },
+  "test_credentials": "admin@research.console / ResearchAdmin2025 (read from /app/backend/.env; never hardcoded in tests).",
+  "seed_data_creation": "None (all data endpoints currently return 503; no runs persisted while offline).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "External API_BASE_URL (https://domestic-enzyme-identifier-handheld.trycloudflare.com) is DOWN — direct curl to its /api/health returns HTTP 000 (connect timeout). Under the new contract this is the CORRECT/PASS state: backend returns 503 'API OFFLINE — nessun dato' on all data endpoints and frontend shows the offline UX everywhere. Pytest suite was rewritten and is offline-aware: it auto-switches between offline (expect 503) and online (assert 200 + no invented combos like HIGH_VOL/LOW_VOL/TREND_UP/BREAKOUT/MEAN_REVERSION) by probing /api/health.external_api_reachable. Edge endpoints honor a 45s upstream timeout — give the UI ~50-60s before asserting api-offline on Edge Lab/Bot pages. Auth is unchanged: httpOnly+Secure cookie + Bearer fallback. AI Research is real (Emergent LLM key) and report-only.",
+  "rca of the issue": "No bug. The product was changed to remove mock/synthetic data and invented combos and to behave as a strict read-only client of the external API. The external API is currently unreachable, so the correct behavior is the documented 503 offline state on data endpoints and the OfflineState UI on every page. The previous pytest suite was asserting the OLD mock-fallback contract (existence of /api/data/synthetic, /api/data/upload-csv, /api/data/fetch-yahoo and rich offline-shaped payloads) so it had to be rewritten to match the new contract; all 25 new tests pass."
+}

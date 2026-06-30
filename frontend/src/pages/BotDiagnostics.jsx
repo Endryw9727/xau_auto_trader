@@ -1,14 +1,56 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bot, ShieldCheck, ShieldAlert, Activity, ClipboardCheck } from "lucide-react";
+import { Bot } from "lucide-react";
 import api from "@/lib/api";
-import { Panel, Num, BoolCell } from "@/components/widgets";
+import { Panel, ApiTable, OfflineState } from "@/components/widgets";
 
 function useReport(name) {
-  return useQuery({ queryKey: ["bot", name], queryFn: async () => (await api.get(`/bot/${name}`)).data });
+  return useQuery({
+    queryKey: ["bot", name],
+    queryFn: async () => (await api.get(`/bot/${name}`)).data,
+    retry: false,
+  });
 }
 
-const statusColor = (s) => (s === "PASS" ? "text-keep" : s === "WARN" ? "text-warn" : "text-exclude");
-const scoreColor = (s) => (s >= 80 ? "text-keep" : s >= 60 ? "text-warn" : "text-exclude");
+// Renders EXACTLY the arrays/scalars returned by the external API — no app-side shaping.
+function ReportBody({ data }) {
+  if (!data) return null;
+  const arrays = Object.entries(data).filter(([, v]) => Array.isArray(v) && v.length && typeof v[0] === "object");
+  const scalars = Object.entries(data).filter(([, v]) => v !== null && typeof v !== "object" && !Array.isArray(v));
+  return (
+    <div>
+      {scalars.length > 0 && (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 px-3 py-2 border-b border-term-border bg-term-bg">
+          {scalars.map(([k, v]) => (
+            <span key={k} className="font-mono text-[10px] text-term-muted">
+              {k}=<span className={String(v) === "False" || v === false ? "text-keep" : "text-term-text"}>{String(v)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {arrays.map(([k, v]) => (
+        <div key={k}>
+          <div className="px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-keep border-b border-term-border">{k}</div>
+          <ApiTable rows={v} maxHeight="320px" />
+        </div>
+      ))}
+      {arrays.length === 0 && <div className="p-4 text-term-dim font-mono text-[12px]">No tabular data.</div>}
+    </div>
+  );
+}
+
+function ReportCard({ title, query, testId }) {
+  return (
+    <Panel title={title} testId={testId}>
+      {query.isLoading ? (
+        <div className="p-4 text-term-dim font-mono text-[12px]">Loading…</div>
+      ) : query.isError ? (
+        <OfflineState />
+      ) : (
+        <ReportBody data={query.data} />
+      )}
+    </Panel>
+  );
+}
 
 export default function BotDiagnostics() {
   const rejection = useReport("rejection-taxonomy");
@@ -21,80 +63,14 @@ export default function BotDiagnostics() {
       <div className="flex items-center gap-2">
         <Bot size={18} className="text-keep" />
         <h1 className="font-mono font-semibold tracking-tight text-base text-term-text">BOT DIAGNOSTICS</h1>
+        <span className="font-mono text-[10px] px-1.5 py-0.5 bg-term-surface2 text-term-muted tracking-wider">EXTERNAL API</span>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        {/* Rejection taxonomy */}
-        <Panel title={`Rejection Taxonomy · ${rejection.data?.total_rejections?.toLocaleString() ?? "…"} total`} testId="rejection-panel">
-          <div className="p-2">
-            {(rejection.data?.buckets || []).map((b) => (
-              <div key={b.reason} className="flex items-center gap-2 py-1" data-testid={`rejection-${b.reason}`}>
-                <span className="font-mono text-[11px] text-term-muted w-40 shrink-0">{b.reason}</span>
-                <div className="flex-1 h-3 bg-term-bg border border-term-border">
-                  <div className="h-full bg-exclude/50" style={{ width: `${b.pct}%` }} />
-                </div>
-                <span className="num text-[11px] text-term-text w-16">{b.pct}%</span>
-                <span className="num text-[11px] text-term-dim w-14"><Num value={b.count} digits={0} /></span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-
-        {/* Market structure */}
-        <Panel title="Market Structure" testId="structure-panel"
-          right={<span className="font-mono text-[10px] text-term-muted">ADX {structure.data?.trend_strength_adx ?? "—"}</span>}>
-          <div className="overflow-auto">
-            <table className="term-table" data-testid="structure-table">
-              <thead><tr><th>Regime</th><th className="text-right">% Time</th><th className="text-right">Avg ATR</th><th className="text-right">Trades</th></tr></thead>
-              <tbody>
-                {(structure.data?.regimes || []).map((r) => (
-                  <tr key={r.regime}>
-                    <td className="text-term-text flex items-center gap-1"><Activity size={11} className="text-keep" />{r.regime}</td>
-                    <td className="text-right"><Num value={r.pct_time} digits={1} /></td>
-                    <td className="text-right"><Num value={r.avg_atr} digits={2} /></td>
-                    <td className="text-right"><Num value={r.trades} digits={0} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-
-        {/* Quality review */}
-        <Panel title="Quality Review" testId="quality-panel"
-          right={<span className={`font-mono text-sm font-bold ${scoreColor(quality.data?.score)}`}>{quality.data?.score ?? "—"}/100</span>}>
-          <div className="p-2">
-            {(quality.data?.checks || []).map((c) => (
-              <div key={c.name} className="flex items-center justify-between py-1.5 border-b border-term-surface2 last:border-0" data-testid={`quality-${c.name}`}>
-                <span className="flex items-center gap-2 font-mono text-[12px] text-term-text"><ClipboardCheck size={12} className="text-term-muted" />{c.name}</span>
-                <span className={`font-mono text-[11px] font-semibold ${statusColor(c.status)}`}>{c.status}</span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-
-        {/* Demo readiness */}
-        <Panel title="Demo Readiness" testId="demo-panel"
-          right={
-            demo.data ? (
-              <span className={`flex items-center gap-1 font-mono text-[11px] font-semibold ${demo.data.ready_for_demo ? "text-keep" : "text-warn"}`}>
-                {demo.data.ready_for_demo ? <ShieldCheck size={13} /> : <ShieldAlert size={13} />}
-                {demo.data.ready_for_demo ? "READY" : "BLOCKED"}
-              </span>
-            ) : null
-          }>
-          <div className="p-2">
-            <div className="mb-2 px-2 py-1.5 bg-warn/10 border border-warn/40 font-mono text-[11px] text-warn">
-              live_armed = false · allow_real_live = false
-            </div>
-            {(demo.data?.gates || []).map((g) => (
-              <div key={g.gate} className="flex items-center justify-between py-1.5 border-b border-term-surface2 last:border-0" data-testid={`gate-${g.gate}`}>
-                <span className="font-mono text-[12px] text-term-text">{g.gate}</span>
-                <BoolCell value={g.passed} />
-              </div>
-            ))}
-          </div>
-        </Panel>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <ReportCard title="Rejection Taxonomy" query={rejection} testId="rejection-panel" />
+        <ReportCard title="Market Structure" query={structure} testId="structure-panel" />
+        <ReportCard title="Quality Review" query={quality} testId="quality-panel" />
+        <ReportCard title="Demo Readiness" query={demo} testId="demo-panel" />
       </div>
     </div>
   );
