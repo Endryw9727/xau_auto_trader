@@ -1,0 +1,121 @@
+{
+  "project_context": {
+    "domain": "Quantitative Trading Research Console",
+    "theme": "Dark Theme (Bloomberg Terminal inspired)",
+    "archetype": "Archetype 4 (Swiss & High-Contrast) adapted for High-Density Financial Terminal",
+    "emotional_tone": "Utilitarian, Authoritative, High-Precision, Objective",
+    "primary_objective": "Maximum data density and uncompromised legibility for quantitative analysis. No frills. Data is the hero."
+  },
+  "typography": {
+    "headings": {
+      "font": "IBM Plex Sans",
+      "weight": "600",
+      "tracking": "tracking-tight",
+      "css_classes": "font-sans font-semibold tracking-tight"
+    },
+    "body": {
+      "font": "IBM Plex Sans",
+      "size": "text-sm",
+      "css_classes": "font-sans text-sm"
+    },
+    "data_tables": {
+      "font": "IBM Plex Mono",
+      "weight": "400",
+      "size": "text-[12px] sm:text-[13px]",
+      "css_classes": "font-mono text-[12px] sm:text-[13px]",
+      "rules": "CRITICAL: Monospace is mandatory for all numbers, prices, t-stats, and p-values to ensure decimal alignment. Use light to medium weights to reduce visual clutter in dense tables."
+    }
+  },
+  "color_palette": {
+    "background": {
+      "main": "#0D1117",
+      "surface": "#161B22",
+      "surface_hover": "#21262D"
+    },
+    "border": {
+      "default": "#30363D",
+      "subtle": "#21262D"
+    },
+    "text": {
+      "primary": "#E6EDF3",
+      "secondary": "#8B949E",
+      "muted": "#484F58"
+    },
+    "semantic": {
+      "keep": "#00FF9D",
+      "exclude": "#FF3333",
+      "mtc_robust": "#00FF9D",
+      "mtc_robust_bg": "rgba(0, 255, 157, 0.15)",
+      "warning": "#FFD700"
+    },
+    "safety_banner": {
+      "background": "#FFD700",
+      "text": "#000000"
+    }
+  },
+  "layout_and_spacing": {
+    "grid_strategy": "Control Room Grid (Dense). Every pixel must be utilized.",
+    "spacing_scale": "Condensed. Use p-2 to p-4 maximum for containers. Internal cell padding should be extremely tight (e.g., px-2 py-1).",
+    "table_density": "Row height 36-40px max. Condense wherever possible.",
+    "borders_and_radii": "1px solid borders. NO rounded corners (rounded-none). Sharp edges only.",
+    "persistent_elements": "Safety banner 'LIVE DISARMED / READ-ONLY' MUST be permanently fixed to top (or bottom) with z-50."
+  },
+  "components": {
+    "tables": "Ultra-dense. Right-align all numeric columns. Left-align text. Use 1px subtle borders between rows. Highlight hover row.",
+    "buttons": "Utilitarian. Flat, 1px border. No shadows. Hover state just slightly lightens background.",
+    "cards": "Cardless aesthetic or flat surfaces with 1px borders. Use border-collapse patterns where possible.",
+    "badges": "Minimal padding (e.g., px-1.5 py-0.5), small monospace font for tags/status."
+  },
+  "pages": {
+    "login": {
+      "description": "JWT Login Screen. Minimal centered box. Monospace branding.",
+      "layout_rules": "Use the abstract dark grid image softly in the background with a heavy dark overlay."
+    },
+    "data": {
+      "description": "Instrument list table, CSV upload utility, Synthetic generator controls, Yahoo fetch.",
+      "layout_rules": "Toolbar at top, dense table taking up the remaining viewport height."
+    },
+    "edge_lab": {
+      "description": "Session-scan, ny-conditional, overnight analysis with verdicts KEEP/EXCLUDE, t-stats.",
+      "layout_rules": "Split views for parameters and results. Verdicts (KEEP/EXCLUDE) must use strict semantic colors."
+    },
+    "significance_audit": {
+      "description": "The Hero View. Dense results table with family_size, mtc_survivors counters.",
+      "layout_rules": "Massive, ultra-dense table. The 'mtc_robust' boolean column MUST be the most visually striking element (bright neon green text/badge)."
+    },
+    "bot_diagnostics": {
+      "description": "Rejection-taxonomy, market-structure, quality-review, demo-readiness report cards.",
+      "layout_rules": "Grid layout (Control Room style). Metric-heavy report cards."
+    },
+    "ai_research": {
+      "description": "Multi-LLM chat/report panel with provider/model routing per task.",
+      "layout_rules": "3-pane split: LLM selection/routing on left, chat/report stream in middle, context/metrics on right. Must enforce 'read-only' visual cues."
+    }
+  },
+  "icons_and_assets": {
+    "icon_library": "lucide-react (using absolute minimum stroke-width, e.g., 1.5, to keep it technical)",
+    "image_urls": [
+      {
+        "url": "https://images.pexels.com/photos/7599718/pexels-photo-7599718.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Intricate vertical wire mesh pattern. Use as a highly opaque background texture for the Login page (e.g., opacity-10).",
+        "category": "background"
+      },
+      {
+        "url": "https://images.pexels.com/photos/6203470/pexels-photo-6203470.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Neon blue line chart on a grid. Can be used as an empty-state graphic in the Data page or AI Research pane.",
+        "category": "empty_state"
+      }
+    ]
+  },
+  "accessibility_and_testing": {
+    "testing_attributes": "CRITICAL: All interactive and key informational elements MUST include a data-testid attribute (e.g., data-testid='login-submit-button').",
+    "contrast": "Text contrast must be heavily optimized for readability. The KEEP/EXCLUDE and mtc_robust colors must have enough luminosity to pop against the #0D1117 background."
+  },
+  "instructions_to_main_agent": [
+    "Install Google Fonts 'IBM Plex Sans' (headings/UI) and 'IBM Plex Mono' (tables/numbers).",
+    "Build a strict Terminal/Bloomberg aesthetic. Dense, dark, sharp corners (rounded-none).",
+    "Implement the 'LIVE DISARMED / READ-ONLY' banner globally, ensuring it's always visible.",
+    "In Significance Audit, ensure the 'mtc_robust' column is overwhelmingly clear (e.g., a glowing green badge for 'true').",
+    "Do NOT use generic Shadcn soft shadows or large paddings. Override Shadcn defaults to be dense and flat."
+  ]
+}
