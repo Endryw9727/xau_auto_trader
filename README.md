@@ -317,6 +317,16 @@ Il metodo open-to-close e una prima ipotesi volutamente semplice: il modulo e la
 base per ipotesi piu fini (sweep-and-reverse, breakout) sullo stesso framework di
 validazione. Solo ricerca: nessun ordine inviato.
 
+Per popolare i CSV degli altri strumenti senza MT5 puoi scaricare dati intraday
+pubblici da Yahoo Finance:
+
+    python scripts/fetch_yahoo_ohlcv.py --symbols EURUSD AUDUSD GBPUSD USDJPY USDCAD NAS100 --interval 1h --range 730d
+
+Scrive `data/raw/<symbol>.csv` (gitignorati). Attenzione: i timestamp Yahoo sono
+in UTC, mentre le finestre sessione del lab sono in ora broker; i confini sessione
+sono quindi approssimati. Per uso operativo, preferire l'export da MT5 sulla VPS,
+allineato all'ora broker.
+
 ## V51 Demo Protective Guardrails
 
 Il layer di esecuzione demo V51 include guardrail protettivi opt-in, tutti
