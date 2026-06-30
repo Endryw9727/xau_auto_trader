@@ -293,6 +293,30 @@ La checklist verifica che `allow_real_live=false`, `demo_only=true`,
 I budget `daily_loss_limit_r` e `max_drawdown_r` sono parametri del report, non
 config di rischio: servono solo a misurare l'effetto teorico dei lock.
 
+## Multi-Instrument Session Edge Lab
+
+Ricerca read-only di un edge di *session drift* su piu strumenti (XAUUSD, NAS100,
+EURUSD, AUDUSD, GBPUSD, USDJPY, USDCAD e altri). Per ogni sessione
+(Asia/London/New York) e direzione misura l'expectancy entrando all'apertura
+della sessione e uscendo alla chiusura, **al netto dei costi**, e valida con uno
+split out-of-sample: un edge conta solo se e significativo (|t| >= soglia, stesso
+segno) **sia in-sample sia out-of-sample**. Gli strumenti senza edge robusto
+vengono marcati `EXCLUDE`.
+
+Configura strumenti, percorsi CSV e costi in `config/edge_lab.yaml` (i CSV
+vivono in `data/raw/`, gitignorati: vanno messi sulla macchina con i dati).
+
+    python scripts/run_session_edge_lab.py
+
+Output:
+- reports/diagnostics/session_edge_verdicts.csv   (KEEP / EXCLUDE per strumento)
+- reports/diagnostics/session_edge_detail.csv     (per sessione e direzione)
+- reports/diagnostics/session_edge_latest.txt
+
+Il metodo open-to-close e una prima ipotesi volutamente semplice: il modulo e la
+base per ipotesi piu fini (sweep-and-reverse, breakout) sullo stesso framework di
+validazione. Solo ricerca: nessun ordine inviato.
+
 ## V51 Demo Protective Guardrails
 
 Il layer di esecuzione demo V51 include guardrail protettivi opt-in, tutti

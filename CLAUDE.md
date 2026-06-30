@@ -7,12 +7,17 @@ questo repository. Va letta **prima** di qualsiasi modifica.
 
 ## 1. Descrizione del progetto
 
-Sistema quantitativo/diagnostico modulare in Python per **XAU/USD**.
+Sistema quantitativo/diagnostico modulare in Python, nato su **XAU/USD** e in
+estensione **multi-strumento** (indici tipo NAS100, FX major: EURUSD, AUDUSD,
+GBPUSD, USDJPY, USDCAD).
 
 Non è (e non deve diventare) un bot aggressivo che apre trade a caso. È prima di
 tutto una **macchina di validazione, diagnostica, filtro e osservazione
 statistica** che analizza price action, sessioni, liquidità, bias
 multi-timeframe, qualità dei setup e rischio **prima** di qualunque esecuzione.
+La ricerca dell'edge è **per-strumento**: si cerca un vantaggio statistico
+robusto (in-sample + out-of-sample, al netto dei costi) e si **escludono** gli
+strumenti dove non emerge (`scripts/run_session_edge_lab.py`).
 
 Layer principali (in `src/`):
 
@@ -140,6 +145,7 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Market structure sessioni | `src/analysis/session_structure.py`, `src/analysis/v51_structure_context.py`, `scripts/run_v51_market_structure_diagnostics.py` |
 | Validazione esiti V51 | `src/analysis/v51_outcome_simulation.py`, `scripts/run_v51_outcome_diagnostics.py` |
 | Quality review V51 | `src/analysis/v51_quality_review.py`, `scripts/run_v51_quality_review.py` |
+| Edge lab multi-strumento | `src/analysis/session_edge_lab.py`, `scripts/run_session_edge_lab.py`, `config/edge_lab.yaml` |
 | Demo readiness (report-only) | `src/analysis/v51_demo_readiness.py`, `scripts/run_v51_demo_readiness_report.py` |
 | Validazione esiti V51 | `src/analysis/v51_outcome_simulation.py`, `scripts/run_v51_outcome_diagnostics.py` |
 | Ciclo demo live-safe | `scripts/run_v51_live_safe_cycle.py` |

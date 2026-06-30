@@ -1,0 +1,38 @@
+# Multi-instrument session edge lab configuration (research only).
+#
+# Each instrument points to a local OHLCV CSV (Date,Open,High,Low,Close,Volume)
+# and a realistic round-trip cost expressed in PRICE UNITS of that instrument
+# (typical spread). CSVs live under data/raw/ and are gitignored: fill the paths
+# on the machine that has the data (e.g. the VPS).
+#
+# cost_per_trade examples (adjust to your broker):
+#   XAUUSD  ~0.20  (20 cents)        EURUSD ~0.00010 (1.0 pip)
+#   NAS100  ~1.0   (1.0 index point) GBPUSD ~0.00015
+#   USDJPY  ~0.010 (1.0 pip)         AUDUSD ~0.00012   USDCAD ~0.00015
+
+min_trades: 40          # minimum session-trades to trust a result
+oos_fraction: 0.30      # last 30% of history held out of sample
+t_stat_threshold: 1.5   # significance required in BOTH in-sample and out-of-sample
+
+instruments:
+  - symbol: XAUUSD
+    csv: data/raw/xauusd.csv
+    cost_per_trade: 0.20
+  - symbol: NAS100
+    csv: data/raw/nas100.csv
+    cost_per_trade: 1.0
+  - symbol: EURUSD
+    csv: data/raw/eurusd.csv
+    cost_per_trade: 0.00010
+  - symbol: AUDUSD
+    csv: data/raw/audusd.csv
+    cost_per_trade: 0.00012
+  - symbol: GBPUSD
+    csv: data/raw/gbpusd.csv
+    cost_per_trade: 0.00015
+  - symbol: USDJPY
+    csv: data/raw/usdjpy.csv
+    cost_per_trade: 0.010
+  - symbol: USDCAD
+    csv: data/raw/usdcad.csv
+    cost_per_trade: 0.00015
