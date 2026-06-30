@@ -1,0 +1,54 @@
+{
+  "summary": "Full backend + frontend e2e for Research Console. 26/26 pytest tests PASSED including real LLM call (/api/ai/chat → Claude Sonnet 4.6). Frontend: login → significance-audit auto-runs with highlighted mtc_robust ROBUST badges (5 survivors / 192 family), safety banner persistent on every page, navigation across all 5 pages works, logout works. AI Research UI chat verified end-to-end with real Claude reply in ~3s.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Symbol picker (SignificanceAudit.jsx) / context-run-select (AIResearch.jsx)",
+        "issue": "React console error: 'Encountered two children with the same key, XAUUSD'. The instruments list returned by GET /api/instruments contains XAUUSD twice (once from mock_data.instruments() base list and once from db.uploaded_instruments after /api/data/fetch-yahoo XAUUSD created a persisted uploaded copy). React .map keys collide. Frontend should de-dupe by symbol, or backend should merge uploaded over base instead of concatenating.",
+        "selector": "key={r.symbol}",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "AIResearch.jsx context-run-select <option>",
+        "issue": "Console hydration warning: '<span> cannot be a child of <option>'. The option content contains JSX that the dev tooling wraps in a span, producing invalid HTML inside <option>. Render option text as a plain string (e.g. `{`${r.run_type} · ${r.created_at.slice(5,16).replace('T',' ')}`}`) without interpolation that may emit a span wrapper, or move the formatting outside.",
+        "selector": "[data-testid='context-run-select'] option",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "AI chat (first attempt only)",
+        "issue": "On a single early attempt the UI received a 502 ('origin web server returned an invalid or incomplete response to Cloudflare'). The same /api/ai/chat call from curl and pytest returned in ~3s with a valid Claude reply. On retry the UI got a 3s real reply. Looks like a transient ingress/proxy hiccup, not a code bug. Worth monitoring; consider adding a retry / better surface for 502 in AIResearch.jsx send() catch.",
+        "affected_selectors": ["[data-testid='chat-send-button']", "[data-testid='chat-messages']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_research_console.py",
+    "/app/test_reports/pytest/iter_results.xml"
+  ],
+  "action_items": [
+    "Fix React duplicate-key warning: de-dupe instruments by symbol on the frontend (or merge uploaded over base on backend in /api/instruments).",
+    "Fix invalid <span> inside <option> in AIResearch.jsx context-run-select (hydration warning). Use a plain string template literal as the option's child."
+  ],
+  "critical_code_review_comments": [
+    "analysis.py /api/instruments concatenates uploaded_instruments AFTER the base mock list — duplicates accumulate every time a user fetches/uploads a symbol that already exists in mock_data.instruments(). Merge by symbol (uploaded overrides) or de-dupe to keep payload clean.",
+    "ai_research.py /api/ai/chat raises HTTP 502 on LLM failure (good) but UI only shows the raw detail text. Consider returning a stable error code so the UI can show 'LLM upstream busy — retry'.",
+    "auth.py login lockout: identifier is ip:email which is reasonable, but proxy IPs behind ingress may be shared; consider using only email for lockout or trusting X-Forwarded-For.",
+    "Both /api/health and /api/safety hard-code live_armed=false / allow_real_live=false and there is genuinely NO arming endpoint anywhere — absolute constraint verified.",
+    "No data-testid on safety banner verified to be 'safety-banner' — present and visible on every authenticated page."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (26/26)", "frontend": "95% (all flows pass; 2 minor console warnings)"},
+  "test_credentials": "admin@research.console / ResearchAdmin2025 (seeded admin) — confirmed working. Self-register also confirmed working.",
+  "seed_data_creation": "Tests created TEST_CSV uploaded instrument, several TESTSYNxxxx synthetic instruments, and a few persisted runs (significance/edge/ny/overnight). Not cleaned up — they are harmless mock-source records.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test suite is at /app/backend/tests/test_research_console.py (pytest, 26 tests, all green in ~7s). It includes a real LLM call. Frontend BASE_URL = https://research-console-1.preview.emergentagent.com. Login auto-fills admin creds. The two outstanding items are React console warnings only — no functional impact. AI chat both via curl and via the UI returned real Claude replies in <5s on retry. If you see a 502 in the UI on first chat call, retry — it's the proxy, backend works.",
+  "rca of the issue": "Duplicate-key warning RCA: /api/instruments response = mock_data.instruments() + db.uploaded_instruments (concat). Once any test/user hits /api/data/fetch-yahoo with symbol XAUUSD (which exists in the mock base list), the same symbol appears twice in the array. Frontend uses key={r.symbol} in the .map, hence the React warning. Fix: in analysis.py /api/instruments, build a dict keyed by symbol and have uploaded entries override base entries, then return list(merged.values()). Or, on the frontend, de-dupe before render."
+}
