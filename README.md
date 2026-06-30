@@ -365,6 +365,25 @@ Un edge walk-forward robusto che NON sopravvive alla correzione e un candidato
 debole, probabilmente gonfiato da quante ipotesi sono state provate: non va
 promosso. Solo ricerca: nessun ordine inviato.
 
+## Overnight/Intraday Anomaly (pre-registered hypothesis)
+
+Test mirato di una singola ipotesi guidata dalla teoria (rendimenti overnight
+positivi, intraday negativi, documentati su oro e indici), con direzioni fissate
+in anticipo: due leg per strumento (OVERNIGHT_LONG, INTRADAY_SHORT). Famiglia di
+test piccola -> penalita per test multipli minima. Riusa `config/edge_lab.yaml` e
+applica la correzione per test multipli.
+
+    python scripts/run_overnight_anomaly.py
+
+Output:
+- reports/diagnostics/overnight_anomaly_audit.csv
+- reports/diagnostics/overnight_anomaly_latest.txt
+
+Nota metodologica: se un leg risulta significativo nella direzione OPPOSTA a
+quella pre-registrata, NON va trattato come edge confermato (sarebbe post-hoc):
+e una nuova ipotesi da validare su dati indipendenti. Solo ricerca: nessun ordine
+inviato.
+
 ## V51 Demo Protective Guardrails
 
 Il layer di esecuzione demo V51 include guardrail protettivi opt-in, tutti
