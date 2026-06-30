@@ -16,6 +16,10 @@ OFFLINE_DETAIL = "API OFFLINE — nessun dato"
 GET_TIMEOUT = 20.0
 EDGE_TIMEOUT = 45.0  # edge computations on the external engine can be slow
 
+# Sent on EVERY call to the external API. Required by ngrok free tunnels, otherwise
+# ngrok returns an HTML browser-warning page instead of the JSON payload.
+EXTERNAL_HEADERS = {"ngrok-skip-browser-warning": "true"}
+
 
 async def proxy(method: str, path: str, json=None, params=None, timeout: float = GET_TIMEOUT):
     """Forward to the external research API. Returns None ONLY when it is unreachable
@@ -24,7 +28,8 @@ async def proxy(method: str, path: str, json=None, params=None, timeout: float =
         return None
     try:
         async with httpx.AsyncClient(timeout=timeout) as c:
-            r = await c.request(method, API_BASE_URL.rstrip("/") + path, json=json, params=params)
+            r = await c.request(method, API_BASE_URL.rstrip("/") + path,
+                                json=json, params=params, headers=EXTERNAL_HEADERS)
             if r.status_code == 200:
                 return r.json()
     except Exception:
