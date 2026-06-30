@@ -138,4 +138,10 @@ def _warm_cache_in_background() -> None:
     threading.Thread(target=service.warm_cache, daemon=True).start()
 
 
-app = Starlette(routes=routes, middleware=middleware, on_startup=[_warm_cache_in_background])
+app = Starlette(routes=routes, middleware=middleware)
+
+# Kick off cache warming at import time. We deliberately avoid Starlette's
+# ``on_startup`` hook because newer Starlette releases removed that constructor
+# argument (it raised ``TypeError: unexpected keyword argument 'on_startup'``);
+# starting the daemon thread here works on every Starlette version.
+_warm_cache_in_background()
