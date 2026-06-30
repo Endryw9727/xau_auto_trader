@@ -327,6 +327,25 @@ in UTC, mentre le finestre sessione del lab sono in ora broker; i confini sessio
 sono quindi approssimati. Per uso operativo, preferire l'export da MT5 sulla VPS,
 allineato all'ora broker.
 
+## NY Conditional Session Edge
+
+Raffinamento dell'edge lab: invece di tradare sempre una sessione, trada New York
+**solo dato il contesto pre-NY** (direzione di Asia+London, che chiudono prima
+dell'apertura NY — nessun lookahead). Testa due ipotesi (continuation/reversal)
+sullo stesso framework walk-forward + costi. Riusa `config/edge_lab.yaml`.
+
+    python scripts/run_ny_conditional_edge.py
+
+Output:
+- reports/diagnostics/ny_conditional_verdicts.csv
+- reports/diagnostics/ny_conditional_detail.csv
+- reports/diagnostics/ny_conditional_latest.txt
+
+`condition`: PRE_UP / PRE_DOWN; `direction`: LONG / SHORT; `hypothesis`:
+CONTINUATION / REVERSAL. Solo ricerca: nessun ordine inviato. Un KEEP qui e un
+candidato da validare oltre (multiple-testing, dati broker-time, paper), non un
+via libera a tradare.
+
 ## V51 Demo Protective Guardrails
 
 Il layer di esecuzione demo V51 include guardrail protettivi opt-in, tutti

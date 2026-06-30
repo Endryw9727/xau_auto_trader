@@ -153,14 +153,22 @@ def symbol_edge_verdict(symbol: str, edges: pd.DataFrame) -> SymbolEdgeVerdict:
     )
 
 
-def _edge_row(
-    session: str,
-    direction: str,
-    net: "pd.Series | any",
-    min_trades: int,
-    oos_fraction: float,
-    t_stat_threshold: float,
+def evaluate_net_returns(
+    net,
+    *,
+    min_trades: int = 30,
+    oos_fraction: float = 0.3,
+    t_stat_threshold: float = 1.5,
 ) -> dict:
+    """Walk-forward robustness of a net (post-cost) return series.
+
+    Returns the metric fields shared by every edge hypothesis: in/out-of-sample
+    trade counts, means, t-stats, win rate and a ``robust_edge`` flag that is
+    True only when the series is significant (|t| >= threshold, same sign) in
+    BOTH halves, has enough trades and a positive overall mean.
+    """
+    if not 0.0 < oos_fraction < 1.0:
+        raise ValueError("oos_fraction must be between 0 and 1")
     series = pd.Series(net).dropna()
     n = int(len(series))
     split = max(1, int(round(n * (1.0 - oos_fraction))))
@@ -180,8 +188,6 @@ def _edge_row(
         and mean_net > 0
     )
     return {
-        "session": session,
-        "direction": direction,
         "trades": n,
         "is_trades": int(len(in_sample)),
         "oos_trades": int(len(out_sample)),
@@ -193,6 +199,20 @@ def _edge_row(
         "win_rate": round(100.0 * float((series > 0).mean()), 2) if n else 0.0,
         "robust_edge": robust,
     }
+
+
+def _edge_row(
+    session: str,
+    direction: str,
+    net: "pd.Series | any",
+    min_trades: int,
+    oos_fraction: float,
+    t_stat_threshold: float,
+) -> dict:
+    metrics = evaluate_net_returns(
+        net, min_trades=min_trades, oos_fraction=oos_fraction, t_stat_threshold=t_stat_threshold
+    )
+    return {"session": session, "direction": direction, **metrics}
 
 
 def _t_stat(series: pd.Series) -> float:
