@@ -36,3 +36,12 @@ instruments:
   - symbol: USDCAD
     csv: data/raw/usdcad.csv
     cost_per_trade: 0.00015
+  - symbol: SP500
+    csv: data/raw/sp500.csv
+    cost_per_trade: 0.5
+  - symbol: EURAUD
+    csv: data/raw/euraud.csv
+    cost_per_trade: 0.00020
+  - symbol: AUDCAD
+    csv: data/raw/audcad.csv
+    cost_per_trade: 0.00020

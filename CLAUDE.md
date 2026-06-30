@@ -150,6 +150,7 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Audit test multipli | `src/analysis/multiple_testing.py`, `scripts/run_edge_significance_audit.py` |
 | Anomalia overnight (teoria) | `src/analysis/overnight_anomaly.py`, `scripts/run_overnight_anomaly.py` |
 | Fetch dati OHLCV (ricerca) | `scripts/fetch_yahoo_ohlcv.py` |
+| Normalizza CSV broker | `scripts/normalize_broker_csv.py` |
 | Export MT5 multi-simbolo (broker-time) | `scripts/export_mt5_instruments.py` |
 | Research API (console web) | `src/api/research_service.py`, `src/api/app.py`, `scripts/serve_research_api.py` |
 | Demo readiness (report-only) | `src/analysis/v51_demo_readiness.py`, `scripts/run_v51_demo_readiness_report.py` |

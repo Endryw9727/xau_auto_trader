@@ -365,6 +365,17 @@ Un edge walk-forward robusto che NON sopravvive alla correzione e un candidato
 debole, probabilmente gonfiato da quante ipotesi sono state provate: non va
 promosso. Solo ricerca: nessun ordine inviato.
 
+## Normalizzare CSV del broker
+
+I CSV esportati dai broker spesso sono senza intestazione e con nomi tipo
+`EURUSD_M15.csv` / `USATECHIDXUSD_M15.csv`. Questo convertitore aggiunge
+l'intestazione `Date,Open,High,Low,Close,Volume` e li rinomina in
+`data/raw/<symbol>.csv` (mappa anche gli indici: USATECHIDXUSD→nas100,
+USA500IDXUSD→sp500). Gestisce header presente/assente, datetime unico o
+data/ora separate, colonne extra. Solo trasformazione, nessun ordine.
+
+    python scripts/normalize_broker_csv.py --input C:\Users\Administrator\Downloads --output data/raw
+
 ## MT5 Multi-Instrument Export (broker-time data)
 
 Esporta in sola lettura i CSV OHLCV broker-time da MT5 per la ricerca edge
