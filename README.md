@@ -346,6 +346,25 @@ CONTINUATION / REVERSAL. Solo ricerca: nessun ordine inviato. Un KEEP qui e un
 candidato da validare oltre (multiple-testing, dati broker-time, paper), non un
 via libera a tradare.
 
+## Edge Significance Audit (multiple testing)
+
+Cercando edge in molte combinazioni (strumenti x sessioni x direzioni x ipotesi),
+alcune sembrano significative per caso. Questo audit ri-esegue tutte le ricerche,
+raccoglie l'intera famiglia di ipotesi e applica correzioni per test multipli
+(Bonferroni e Benjamini-Hochberg) ai t-stat out-of-sample. Un edge e considerato
+affidabile (`mtc_robust`) solo se e walk-forward robusto **e** sopravvive alla
+correzione.
+
+    python scripts/run_edge_significance_audit.py
+
+Output:
+- reports/diagnostics/edge_significance_audit.csv
+- reports/diagnostics/edge_significance_latest.txt
+
+Un edge walk-forward robusto che NON sopravvive alla correzione e un candidato
+debole, probabilmente gonfiato da quante ipotesi sono state provate: non va
+promosso. Solo ricerca: nessun ordine inviato.
+
 ## V51 Demo Protective Guardrails
 
 Il layer di esecuzione demo V51 include guardrail protettivi opt-in, tutti

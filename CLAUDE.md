@@ -147,6 +147,7 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Quality review V51 | `src/analysis/v51_quality_review.py`, `scripts/run_v51_quality_review.py` |
 | Edge lab multi-strumento | `src/analysis/session_edge_lab.py`, `scripts/run_session_edge_lab.py`, `config/edge_lab.yaml` |
 | Edge NY condizionato | `src/analysis/ny_conditional_edge.py`, `scripts/run_ny_conditional_edge.py` |
+| Audit test multipli | `src/analysis/multiple_testing.py`, `scripts/run_edge_significance_audit.py` |
 | Fetch dati OHLCV (ricerca) | `scripts/fetch_yahoo_ohlcv.py` |
 | Demo readiness (report-only) | `src/analysis/v51_demo_readiness.py`, `scripts/run_v51_demo_readiness_report.py` |
 | Validazione esiti V51 | `src/analysis/v51_outcome_simulation.py`, `scripts/run_v51_outcome_diagnostics.py` |
