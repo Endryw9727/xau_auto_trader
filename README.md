@@ -365,6 +365,29 @@ Un edge walk-forward robusto che NON sopravvive alla correzione e un candidato
 debole, probabilmente gonfiato da quante ipotesi sono state provate: non va
 promosso. Solo ricerca: nessun ordine inviato.
 
+## MT5 Multi-Instrument Export (broker-time data)
+
+Esporta in sola lettura i CSV OHLCV broker-time da MT5 per la ricerca edge
+multi-strumento. Per ogni strumento legge le candele chiuse a un timeframe e
+scrive `data/raw/<symbol>.csv` (ora server broker). Non invia ordini; se MT5 non
+e disponibile o un simbolo non torna candele, registra WARNING e lascia il file
+precedente invariato. Va eseguito sulla VPS dove MT5 e installato.
+
+    python scripts/export_mt5_instruments.py --timeframe M15 --bars 50000
+    python scripts/export_mt5_instruments.py --symbols EURUSD NAS100 --map NAS100=US100 EURUSD=EURUSD.r
+
+Output: `data/raw/<symbol>.csv` + `reports/diagnostics/mt5_instrument_export_*`.
+
+Dopo l'export, rilancia la catena di validazione su dati broker-time:
+
+    python scripts/run_session_edge_lab.py
+    python scripts/run_ny_conditional_edge.py
+    python scripts/run_edge_significance_audit.py
+    python scripts/run_overnight_anomaly.py
+
+I nomi simbolo del broker variano: usa `--map PROJ=BROKER` per allinearli (es.
+`XAUUSD=XAUUSD-P`, `NAS100=US100`).
+
 ## Overnight/Intraday Anomaly (pre-registered hypothesis)
 
 Test mirato di una singola ipotesi guidata dalla teoria (rendimenti overnight

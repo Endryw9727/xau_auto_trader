@@ -150,6 +150,7 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Audit test multipli | `src/analysis/multiple_testing.py`, `scripts/run_edge_significance_audit.py` |
 | Anomalia overnight (teoria) | `src/analysis/overnight_anomaly.py`, `scripts/run_overnight_anomaly.py` |
 | Fetch dati OHLCV (ricerca) | `scripts/fetch_yahoo_ohlcv.py` |
+| Export MT5 multi-simbolo (broker-time) | `scripts/export_mt5_instruments.py` |
 | Demo readiness (report-only) | `src/analysis/v51_demo_readiness.py`, `scripts/run_v51_demo_readiness_report.py` |
 | Validazione esiti V51 | `src/analysis/v51_outcome_simulation.py`, `scripts/run_v51_outcome_diagnostics.py` |
 | Ciclo demo live-safe | `scripts/run_v51_live_safe_cycle.py` |
