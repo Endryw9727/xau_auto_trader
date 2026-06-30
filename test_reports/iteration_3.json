@@ -1,0 +1,33 @@
+{
+  "summary": "Focused retest of iteration_2 HIGH issue (/api/edge/overnight contract mismatch) + regression sweep + cookie auth sanity. Backend: 32/32 pytest PASS (tightened test_overnight to enforce the normalized contract: verdicts + detail, each verdict has symbol/verdict/best_session=OVERNIGHT/best_direction/best_oos_t_stat/p_value/bh_significant/mtc_robust). Curl probe confirmed verdicts=9, detail=18, run_id present, best_session uniformly 'OVERNIGHT'. Frontend e2e (network-aware Playwright via external HTTPS): login -> Edge Lab -> Overnight tab -> RUN -> awaited /api/edge/overnight 200 -> [data-testid='edge-verdicts-table'] rendered 9 rows AND [data-testid='edge-detail-table'] rendered 18 rows. Regression: Session Scan (2 verdicts rendered) and NY Conditional (2 verdicts rendered) still work. Cookie auth sanity: document.cookie does NOT expose access_token (HttpOnly intact); logout redirects to /login and a subsequent visit to /edge-lab is bounced back to /login. No React pageerrors; only expected 401 console log when /api/auth/me probes a logged-out session. The iteration_2 HIGH issue is RESOLVED.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_research_console.py",
+    "/app/test_reports/pytest/iter_3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "analysis.py::_normalize_overnight is a clean, minimal adapter: picks best leg per symbol by oos_t_stat, derives direction from leg string, sets best_session='OVERNIGHT', preserves raw rows under result['detail']. Idempotent (no-op when upstream already returns 'verdicts', e.g., mock_data path). KEEP rule matches frontend expectation (mtc_robust OR oos_t_stat>=1.8).",
+    "EdgeLab.jsx now correctly reads result?.detail for the secondary table (was the prior gap). Both tables share the same testids across tabs, so per-tab schemas should keep the column definitions stable — currently good.",
+    "Backend test test_overnight previously accepted 'rows' OR 'verdicts' to flag the regression; tightened in this iteration to enforce only the normalized contract (verdicts + detail). Still passes.",
+    "Pytest still uses xdist (LoadScopeScheduling) — 32 tests in ~40s against the live external API; acceptable. No flakies observed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_research_console.py (tightened TestEdgeLab.test_overnight to assert normalized verdicts + detail contract; all 9 required verdict keys validated)"
+  ],
+  "success_rate": {"backend": "100% (32/32)", "frontend": "100% (Edge Lab Overnight/Session/NY tabs + cookie auth + logout)"},
+  "test_credentials": "admin@research.console / ResearchAdmin2025 (read from backend/.env via _env_from_backend in tests; never hardcoded).",
+  "seed_data_creation": "A few new runs persisted as a side effect of running edge endpoints in tests + UI clicks (overnight, session-scan, ny-conditional, significance-audit). Harmless.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 2's HIGH issue (Overnight tab empty due to upstream 'rows' vs frontend 'verdicts' mismatch) is fully resolved by backend _normalize_overnight in analysis.py and the EdgeLab.jsx detail-table integration. Backend pytest is 32/32 with the strict normalized-contract assertions now in place. All edge tabs render rows. Cookie auth (HttpOnly, Secure, SameSite=Lax) remains intact end-to-end on the external HTTPS preview URL. The external cloudflare-tunneled API returns more rows than the requested 'symbols' filter for /api/edge/overnight (~9 verdicts / ~18 legs) — that is the upstream behavior, not a bug.",
+  "rca of the issue": "RCA from iter_2: external upstream /api/edge/overnight returned only 'rows' (dense per-leg) while session-scan/ny-conditional returned aggregated 'verdicts'. Frontend EdgeLab.jsx rendered (result?.verdicts || []), so the Overnight tab showed an empty table. Mitigation applied (and verified here): backend analysis.py::_normalize_overnight synthesizes 'verdicts' by selecting the best leg per symbol (by oos_t_stat) and exposes the raw rows under 'detail'. KEEP rule = mtc_robust OR oos_t_stat>=1.8. This restores a single uniform contract across all three edge endpoints. Curl + Playwright network-and-DOM verification both confirm: status=200, verdicts populated, detail populated, UI tables render rows."
+}

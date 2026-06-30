@@ -169,10 +169,47 @@ async def ny_conditional(body: SymbolsIn, user: dict = Depends(get_current_user)
     return {**result, "run_id": run_id}
 
 
+def _normalize_overnight(result: dict) -> dict:
+    """External /api/edge/overnight returns dense 'rows' but no aggregated 'verdicts'.
+    Synthesize a per-symbol verdict (best leg) so the contract matches the other edge
+    endpoints. Mock data already includes 'verdicts', so this is a no-op there."""
+    if result.get("verdicts"):
+        return result
+    rows = result.get("rows") or result.get("detail") or []
+    best_by_symbol: dict = {}
+    for r in rows:
+        sym = r.get("symbol")
+        if sym is None:
+            continue
+        cur = best_by_symbol.get(sym)
+        if cur is None or (r.get("oos_t_stat") or 0) > (cur.get("oos_t_stat") or 0):
+            best_by_symbol[sym] = r
+    verdicts = []
+    for sym, best in best_by_symbol.items():
+        leg = str(best.get("leg", "")).upper()
+        direction = "LONG" if "LONG" in leg else ("SHORT" if "SHORT" in leg else best.get("direction", "—"))
+        t = best.get("oos_t_stat")
+        keep = bool(best.get("mtc_robust")) or (isinstance(t, (int, float)) and t >= 1.8)
+        verdicts.append({
+            "symbol": sym,
+            "verdict": "KEEP" if keep else "EXCLUDE",
+            "best_session": "OVERNIGHT",
+            "best_direction": direction,
+            "best_oos_t_stat": t,
+            "p_value": best.get("p_value"),
+            "bh_significant": best.get("bh_significant"),
+            "mtc_robust": best.get("mtc_robust"),
+        })
+    result["verdicts"] = verdicts
+    if not result.get("detail"):
+        result["detail"] = rows
+    return result
+
+
 @router.post("/edge/overnight")
 async def edge_overnight(body: SymbolsIn, user: dict = Depends(get_current_user)):
     ext = await proxy("POST", "/api/edge/overnight", json=body.model_dump())
-    result = ext or mock_data.overnight(body.symbols)
+    result = _normalize_overnight(ext or mock_data.overnight(body.symbols))
     run_id = await persist_run("overnight", body.model_dump(), result, user["email"])
     return {**result, "run_id": run_id}
 

@@ -193,14 +193,21 @@ class TestEdgeLab:
         assert r.status_code == 200, r.text
         data = r.json()
         assert "run_id" in data
-        # External API returns 'rows' for overnight; mock returned 'verdicts'.
-        # Accept either shape so we can flag the regression separately.
-        items = data.get("verdicts") or data.get("rows") or []
-        assert items, f"no verdicts/rows: {list(data.keys())}"
-        for v in items:
-            assert "p_value" in v
-            assert "bh_significant" in v
-            assert "mtc_robust" in v
+        # Post-normalization: backend MUST synthesize 'verdicts' and expose 'detail' rows.
+        verdicts = data.get("verdicts") or []
+        detail = data.get("detail") or []
+        assert verdicts, f"no verdicts after normalization: {list(data.keys())}"
+        assert detail, f"no detail rows after normalization: {list(data.keys())}"
+        for v in verdicts:
+            for k in ("symbol", "verdict", "best_session", "best_direction",
+                      "best_oos_t_stat", "p_value", "bh_significant", "mtc_robust"):
+                assert k in v, f"missing {k} in verdict"
+            assert v["verdict"] in ("KEEP", "EXCLUDE")
+            assert v["best_session"] == "OVERNIGHT"
+        for row in detail:
+            assert "p_value" in row
+            assert "bh_significant" in row
+            assert "mtc_robust" in row
 
     def test_significance_audit(self, auth_headers):
         r = requests.post(f"{BASE_URL}/api/edge/significance-audit", headers=auth_headers,
