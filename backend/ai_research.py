@@ -95,6 +95,7 @@ async def chat(body: ChatIn, user: dict = Depends(get_current_user)):
         system_message=SYSTEM_PROMPT,
     ).with_model(provider, model)
 
+    reply = ""
     try:
         reply = await chat_client.send_message(UserMessage(text=prompt))
     except Exception as e:

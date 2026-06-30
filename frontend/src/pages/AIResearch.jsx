@@ -4,6 +4,16 @@ import { BrainCircuit, Send, Loader2, Lock, Paperclip, Bot, User } from "lucide-
 import api from "@/lib/api";
 import { Panel } from "@/components/widgets";
 
+let _msgSeq = 0;
+const newMsg = (msg) => ({ id: ++_msgSeq, ...msg });
+
+function bubbleClass(m) {
+  const base = "max-w-[85%] px-3 py-2 border font-mono text-[12.5px] whitespace-pre-wrap leading-relaxed ";
+  if (m.role === "user") return base + "border-term-border bg-term-surface2 text-term-text";
+  if (m.error) return base + "border-exclude/40 bg-exclude/10 text-exclude";
+  return base + "border-keep/30 bg-keep/[0.04] text-term-text";
+}
+
 export default function AIResearch() {
   const [task, setTask] = useState("explain_significance");
   const [provider, setProvider] = useState("");
@@ -24,7 +34,8 @@ export default function AIResearch() {
 
   useEffect(() => {
     if (config && tasks[task]) { setProvider(tasks[task].provider); setModel(tasks[task].model); }
-    // eslint-disable-next-line
+    // re-sync the model override whenever the selected task or config changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task, config]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
@@ -38,7 +49,7 @@ export default function AIResearch() {
 
   const send = async () => {
     if (!input.trim() || loading) return;
-    const userMsg = { role: "user", content: input };
+    const userMsg = newMsg({ role: "user", content: input });
     setMessages((m) => [...m, userMsg]);
     const question = input;
     setInput("");
@@ -48,9 +59,9 @@ export default function AIResearch() {
         task, provider, model, message: question, context: contextData, conversation_id: conversationId,
       });
       setConversationId(data.conversation_id);
-      setMessages((m) => [...m, { role: "assistant", content: data.reply, provider: data.provider, model: data.model }]);
+      setMessages((m) => [...m, newMsg({ role: "assistant", content: data.reply, provider: data.provider, model: data.model })]);
     } catch (e) {
-      setMessages((m) => [...m, { role: "assistant", content: `⚠ ${e.response?.data?.detail || e.message}`, error: true }]);
+      setMessages((m) => [...m, newMsg({ role: "assistant", content: `⚠ ${e.response?.data?.detail || e.message}`, error: true })]);
     } finally {
       setLoading(false);
     }
@@ -108,11 +119,10 @@ export default function AIResearch() {
                   <br /><span className="text-warn">Models never compute statistics or place orders.</span>
                 </div>
               )}
-              {messages.map((m, i) => (
-                <div key={i} className={`flex gap-2 ${m.role === "user" ? "justify-end" : ""}`}>
+              {messages.map((m) => (
+                <div key={m.id} className={`flex gap-2 ${m.role === "user" ? "justify-end" : ""}`}>
                   {m.role === "assistant" && <Bot size={16} className={`shrink-0 mt-1 ${m.error ? "text-exclude" : "text-keep"}`} />}
-                  <div className={`max-w-[85%] px-3 py-2 border font-mono text-[12.5px] whitespace-pre-wrap leading-relaxed ${
-                    m.role === "user" ? "border-term-border bg-term-surface2 text-term-text" : m.error ? "border-exclude/40 bg-exclude/10 text-exclude" : "border-keep/30 bg-keep/[0.04] text-term-text"}`}>
+                  <div className={bubbleClass(m)}>
                     {m.role === "assistant" && !m.error && (
                       <div className="font-mono text-[9px] text-term-muted mb-1 uppercase">{m.provider}/{m.model}</div>
                     )}

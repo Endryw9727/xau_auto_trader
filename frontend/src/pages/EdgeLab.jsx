@@ -11,6 +11,29 @@ const TABS = [
 ];
 const DEFAULTS = ["XAUUSD", "EURUSD"];
 
+const RIGHT_COLS = ["oos_t_stat", "is_t_stat", "p_value", "sharpe", "win_rate", "expectancy", "n_trades", "mean_net_pct", "trades"];
+const PCT_COLS = ["expectancy", "win_rate", "mean_net_pct"];
+
+function headerClass(c) {
+  if (c === "mtc_robust") return "text-center col-robust";
+  if (RIGHT_COLS.includes(c)) return "text-right";
+  return "";
+}
+
+function renderDetailCell(c, row) {
+  const v = row[c];
+  if (c === "mtc_robust") return <RobustCell value={v} />;
+  if (c === "oos_t_stat" || c === "is_t_stat") return <TStat value={v} />;
+  if (c === "p_value") return <PValue value={v} />;
+  if (typeof v === "boolean") return <BoolCell value={v} />;
+  if (typeof v === "number") return <Num value={v} digits={PCT_COLS.includes(c) ? 4 : 2} />;
+  return <span className="text-term-muted">{v}</span>;
+}
+
+function detailRowKey(row, idx) {
+  return [row.symbol, row.session || row.condition || row.leg || "", row.hypothesis || "", row.direction || "", idx].join("-");
+}
+
 export default function EdgeLab() {
   const [tab, setTab] = useState(TABS[0]);
   const [selected, setSelected] = useState(DEFAULTS);
@@ -96,8 +119,8 @@ export default function EdgeLab() {
               </tr>
             </thead>
             <tbody>
-              {(result?.verdicts || []).map((v, idx) => (
-                <tr key={idx} data-testid={`edge-verdict-${idx}`}>
+              {(result?.verdicts || []).map((v) => (
+                <tr key={v.symbol} data-testid={`edge-verdict-${v.symbol}`}>
                   <td className="text-term-text">{v.symbol}</td>
                   <td><Verdict value={v.verdict} /></td>
                   <td className="text-term-muted">{v.best_session}</td>
@@ -121,7 +144,7 @@ export default function EdgeLab() {
               <thead>
                 <tr>
                   {detailCols.map((c) => (
-                    <th key={c} className={["oos_t_stat", "is_t_stat", "p_value", "sharpe", "win_rate", "expectancy", "n_trades"].includes(c) ? "text-right" : c === "mtc_robust" ? "text-center col-robust" : ""}>
+                    <th key={c} className={headerClass(c)}>
                       {c}
                     </th>
                   ))}
@@ -129,15 +152,10 @@ export default function EdgeLab() {
               </thead>
               <tbody>
                 {detail.map((row, idx) => (
-                  <tr key={idx}>
+                  <tr key={detailRowKey(row, idx)}>
                     {detailCols.map((c) => (
                       <td key={c} className={c === "mtc_robust" ? "text-center col-robust" : ""}>
-                        {c === "mtc_robust" ? <RobustCell value={row[c]} /> :
-                         c === "oos_t_stat" || c === "is_t_stat" ? <TStat value={row[c]} /> :
-                         c === "p_value" ? <PValue value={row[c]} /> :
-                         typeof row[c] === "boolean" ? <BoolCell value={row[c]} /> :
-                         typeof row[c] === "number" ? <Num value={row[c]} digits={c === "expectancy" || c === "win_rate" ? 4 : 2} /> :
-                         <span className="text-term-muted">{row[c]}</span>}
+                        {renderDetailCell(c, row)}
                       </td>
                     ))}
                   </tr>

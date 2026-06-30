@@ -26,7 +26,8 @@ DEFAULT_INSTRUMENTS = [
 
 
 def _rng(*parts) -> random.Random:
-    seed = int(hashlib.md5("|".join(str(p) for p in parts).encode()).hexdigest(), 16) % (2**32)
+    # SHA-256 used only for DETERMINISTIC mock-data seeding (not security).
+    seed = int(hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest(), 16) % (2**32)
     return random.Random(seed)
 
 

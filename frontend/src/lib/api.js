@@ -2,13 +2,8 @@ import axios from "axios";
 
 export const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const api = axios.create({ baseURL: API });
-
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("rc_token");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+// Auth uses httpOnly cookies set by the backend; we never read/write the token in JS.
+const api = axios.create({ baseURL: API, withCredentials: true });
 
 export function formatApiError(detail) {
   if (detail == null) return "Something went wrong. Please try again.";

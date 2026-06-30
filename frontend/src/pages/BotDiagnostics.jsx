@@ -8,6 +8,7 @@ function useReport(name) {
 }
 
 const statusColor = (s) => (s === "PASS" ? "text-keep" : s === "WARN" ? "text-warn" : "text-exclude");
+const scoreColor = (s) => (s >= 80 ? "text-keep" : s >= 60 ? "text-warn" : "text-exclude");
 
 export default function BotDiagnostics() {
   const rejection = useReport("rejection-taxonomy");
@@ -61,7 +62,7 @@ export default function BotDiagnostics() {
 
         {/* Quality review */}
         <Panel title="Quality Review" testId="quality-panel"
-          right={<span className={`font-mono text-sm font-bold ${quality.data?.score >= 80 ? "text-keep" : quality.data?.score >= 60 ? "text-warn" : "text-exclude"}`}>{quality.data?.score ?? "—"}/100</span>}>
+          right={<span className={`font-mono text-sm font-bold ${scoreColor(quality.data?.score)}`}>{quality.data?.score ?? "—"}/100</span>}>
           <div className="p-2">
             {(quality.data?.checks || []).map((c) => (
               <div key={c.name} className="flex items-center justify-between py-1.5 border-b border-term-surface2 last:border-0" data-testid={`quality-${c.name}`}>

@@ -27,7 +27,11 @@ export default function SignificanceAudit() {
     }
   };
 
-  useEffect(() => { run(DEFAULTS); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    run(DEFAULTS);
+    // auto-run once on mount with the default universe
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggle = (sym) =>
     setSelected((s) => (s.includes(sym) ? s.filter((x) => x !== sym) : [...s, sym]));
@@ -122,7 +126,7 @@ export default function SignificanceAudit() {
             </thead>
             <tbody>
               {rows.map((r, idx) => (
-                <tr key={idx} data-testid={`sig-row-${idx}`} className={r.mtc_robust ? "bg-robust/[0.04]" : ""}>
+                <tr key={`${r.symbol}-${r.combo}`} data-testid={`sig-row-${idx}`} className={r.mtc_robust ? "bg-robust/[0.04]" : ""}>
                   <td className="text-term-text">{r.symbol}</td>
                   <td className="text-term-muted">{r.combo}</td>
                   <td className="text-right"><TStat value={r.oos_t_stat} /></td>

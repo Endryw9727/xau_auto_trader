@@ -6,6 +6,10 @@ import { toast } from "sonner";
 import api, { formatApiError } from "@/lib/api";
 import { Panel, Num } from "@/components/widgets";
 
+const CHART_TOOLTIP_STYLE = { background: "#161B22", border: "1px solid #30363D", fontFamily: "IBM Plex Mono", fontSize: 11 };
+const CHART_LABEL_STYLE = { display: "none" };
+const CHART_Y_DOMAIN = ["dataMin", "dataMax"];
+
 export default function Data() {
   const qc = useQueryClient();
   const fileRef = useRef(null);
@@ -96,8 +100,8 @@ export default function Data() {
           <div className="h-40 p-2">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={preview.series}>
-                <YAxis hide domain={["dataMin", "dataMax"]} />
-                <Tooltip contentStyle={{ background: "#161B22", border: "1px solid #30363D", fontFamily: "IBM Plex Mono", fontSize: 11 }} labelStyle={{ display: "none" }} />
+                <YAxis hide domain={CHART_Y_DOMAIN} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_LABEL_STYLE} />
                 <Line type="monotone" dataKey="close" stroke="#00FF9D" strokeWidth={1.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>

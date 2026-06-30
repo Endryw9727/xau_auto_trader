@@ -23,10 +23,12 @@ export default function Layout() {
 
   useEffect(() => {
     api.get("/safety").then((r) => setSafety(r.data)).catch(() => {});
+    // run once on mount; `api` is a stable module singleton
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate("/login");
   };
 

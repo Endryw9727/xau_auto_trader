@@ -2,7 +2,7 @@ import os
 import jwt
 import bcrypt
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends, Response
 from pydantic import BaseModel, EmailStr, Field
 from bson import ObjectId
 
@@ -10,10 +10,19 @@ from db import db
 
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_DAYS = 7
+COOKIE_MAX_AGE = ACCESS_TOKEN_DAYS * 24 * 3600
 MAX_FAILED = 5
 LOCKOUT_MINUTES = 15
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _set_auth_cookie(response: Response, token: str):
+    # httpOnly cookie is the primary credential store for browsers (XSS-safe).
+    response.set_cookie(
+        key="access_token", value=token, httponly=True, secure=True,
+        samesite="lax", max_age=COOKIE_MAX_AGE, path="/",
+    )
 
 
 def get_jwt_secret() -> str:
@@ -103,7 +112,7 @@ async def _clear_failures(identifier: str):
 
 
 @router.post("/register")
-async def register(body: RegisterIn):
+async def register(body: RegisterIn, response: Response):
     email = body.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -117,11 +126,12 @@ async def register(body: RegisterIn):
     res = await db.users.insert_one(doc)
     doc["_id"] = res.inserted_id
     token = create_access_token(str(res.inserted_id), email)
+    _set_auth_cookie(response, token)
     return {"token": token, "user": _sanitize(doc)}
 
 
 @router.post("/login")
-async def login(body: LoginIn, request: Request):
+async def login(body: LoginIn, request: Request, response: Response):
     email = body.email.lower()
     ip = request.client.host if request.client else "unknown"
     identifier = f"{ip}:{email}"
@@ -132,6 +142,7 @@ async def login(body: LoginIn, request: Request):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     await _clear_failures(identifier)
     token = create_access_token(str(user["_id"]), email)
+    _set_auth_cookie(response, token)
     return {"token": token, "user": _sanitize(user)}
 
 
@@ -141,7 +152,8 @@ async def me(user: dict = Depends(get_current_user)):
 
 
 @router.post("/logout")
-async def logout(user: dict = Depends(get_current_user)):
+async def logout(response: Response, user: dict = Depends(get_current_user)):
+    response.delete_cookie("access_token", path="/")
     return {"status": "ok"}
 
 
