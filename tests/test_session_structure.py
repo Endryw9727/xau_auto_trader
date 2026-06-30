@@ -72,6 +72,22 @@ def test_build_daily_structure_no_sweep():
     assert row["ny_direction"] == "DOWN"
 
 
+def test_reclaim_ignores_pre_sweep_close():
+    # London closes INSIDE the Asia range first, then sweeps the high and stays
+    # above (no reclaim). The early in-range close must not count as a reclaim.
+    rows = [
+        _candle("2026-05-24 02:00:00", 2005, 2010, 2000, 2006),  # ASIA range 2000-2010
+        _candle("2026-05-24 11:00:00", 2005, 2008, 2002, 2004),  # LONDON inside range
+        _candle("2026-05-24 12:00:00", 2004, 2025, 2004, 2024),  # LONDON sweep high, stays above
+    ]
+    result = structure.build_daily_structure(pd.DataFrame(rows))
+
+    row = result.iloc[0]
+    assert row["sweep_side"] == "BUY_SIDE"
+    assert bool(row["reclaimed_range"]) is False
+    assert row["manipulation_label"] == "sweep_not_reclaimed"
+
+
 def test_build_daily_structure_buy_side_sweep_without_reclaim():
     rows = [
         _candle("2026-05-22 02:00:00", 2005, 2010, 2000, 2006),  # ASIA

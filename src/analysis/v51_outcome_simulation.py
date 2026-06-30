@@ -169,6 +169,11 @@ def _simulate_one(
             reward_r = abs(target - entry) / risk
             return {**base, "outcome": "WIN", "r_multiple": reward_r, "bars_held": bars, "exit_time": exit_time, "exit_price": target}
 
+    if len(future) < max_horizon_candles:
+        # The full horizon has not elapsed yet (candidate is still open near the
+        # end of the data): leave it INVALID rather than score an early timeout
+        # that would bias total_R / expectancy.
+        return base
     last_time = future.index[-1]
     last_close = float(future.iloc[-1]["Close"])
     mark = (last_close - entry) / risk if side == "BUY" else (entry - last_close) / risk

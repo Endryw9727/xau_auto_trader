@@ -69,10 +69,14 @@ def test_annotate_aligns_long_with_sell_side_sweep():
     assert buy["manipulation_label"] == "london_sweep_low_reclaimed"
     assert buy["structure_alignment"] == "aligned"
     assert buy["sweep_side"] == "SELL_SIDE"
-    assert buy["ny_direction"] == "UP"
+    # No lookahead: at the 12:00 BUY candle, the NY session has not happened yet,
+    # so its direction is not known.
+    assert buy["ny_direction"] == "UNKNOWN"
 
     sell = annotated[annotated["side"] == "SELL"].iloc[0]
     assert sell["structure_alignment"] == "counter"
+    # The 20:00 SELL candle is inside NY, so NY direction is known by then.
+    assert sell["ny_direction"] == "UP"
 
 
 def test_annotate_distance_to_nearest_level():

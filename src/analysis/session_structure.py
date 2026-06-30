@@ -194,14 +194,24 @@ def _reclaimed_range(
     swept_high: bool,
     swept_low: bool,
 ) -> bool:
-    """True if, after a sweep, a London candle closes back inside the Asia range."""
+    """True if, on/after the candle that swept, a London candle closes back inside.
+
+    Only closes from the sweep candle onward count: a candle that closed inside
+    the range BEFORE the sweep must not be mistaken for a reclaim of that sweep.
+    """
     if asia_high is None or asia_low is None or london.empty or not (swept_high or swept_low):
         return False
-    closes = london["Close"]
-    if swept_high and (closes < asia_high).any():
-        return True
-    if swept_low and (closes > asia_low).any():
-        return True
+    highs = london["High"].to_numpy()
+    lows = london["Low"].to_numpy()
+    closes = london["Close"].to_numpy()
+    if swept_high:
+        sweep_idx = next((i for i, high in enumerate(highs) if high > asia_high), None)
+        if sweep_idx is not None and any(closes[j] < asia_high for j in range(sweep_idx, len(closes))):
+            return True
+    if swept_low:
+        sweep_idx = next((i for i, low in enumerate(lows) if low < asia_low), None)
+        if sweep_idx is not None and any(closes[j] > asia_low for j in range(sweep_idx, len(closes))):
+            return True
     return False
 
 
@@ -219,7 +229,7 @@ def _manipulation_label(sweep_side: str, reclaimed: bool) -> str:
 
 def _direction(open_price: float | None, close_price: float | None) -> str:
     if open_price is None or close_price is None:
-        return "FLAT"
+        return "UNKNOWN"  # no candles for the session yet (e.g. NY not open)
     if close_price > open_price:
         return "UP"
     if close_price < open_price:

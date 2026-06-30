@@ -175,6 +175,39 @@ def test_no_lookahead_uses_only_later_candles():
     assert outcomes.iloc[0]["bars_held"] == 1
 
 
+def test_no_timeout_before_full_horizon():
+    # Only one future candle is available but the horizon asks for 5: a still-open
+    # candidate must be INVALID, not an artificial TIMEOUT that biases expectancy.
+    data = pd.DataFrame(
+        {
+            "Open": [2000, 2000],
+            "High": [2001, 2001],
+            "Low": [1999, 1999],
+            "Close": [2000, 2001],
+            "Volume": [100, 100],
+        },
+        index=pd.to_datetime(["2026-05-20 10:00:00", "2026-05-20 10:15:00"]),
+    )
+    log = pd.DataFrame(
+        [
+            {
+                "signal_id": "X",
+                "candle_time": "2026-05-20T10:00:00",
+                "session": "LONDON",
+                "side": "BUY",
+                "decision": "ACCEPTED",
+                "score": 70.0,
+                "entry_price": 2000.0,
+                "stop_loss": 1998.0,
+                "take_profit": 2010.0,
+                "risk_reward": 5.0,
+            }
+        ]
+    )
+    outcomes = sim.simulate_candidate_outcomes(log, data, max_horizon_candles=5)
+    assert outcomes.iloc[0]["outcome"] == "INVALID"
+
+
 def test_accepted_only_filter():
     outcomes = sim.simulate_candidate_outcomes(_decision_log(), _market_data(), accepted_only=True)
     assert len(outcomes) == 1

@@ -61,14 +61,22 @@ def annotate_candidates_with_structure(
     if candidates.empty:
         return pd.DataFrame(columns=STRUCTURE_CONTEXT_COLUMNS)
 
-    structure = build_daily_structure(market_data)
-    structure_by_day = {pd.Timestamp(row["day"]): row for _, row in structure.iterrows()}
-
+    data = _ensure_datetime_index(market_data)
     candidate_times = pd.to_datetime(candidates["candle_time"], errors="coerce")
     rows = []
     for (_, candidate), candle_time in zip(candidates.iterrows(), candidate_times):
-        day = candle_time.normalize() if pd.notna(candle_time) else None
-        structure_row = structure_by_day.get(day)
+        if pd.isna(candle_time) or data.empty:
+            rows.append(_annotate_row(candidate, candle_time, None, None))
+            continue
+        day = candle_time.normalize()
+        # Point-in-time: only candles up to candle_time on that day are known, so
+        # later London sweeps and the NY direction cannot leak into the context.
+        upto = data[(data.index <= candle_time) & (data.index.normalize() == day)]
+        structure_row = None
+        if not upto.empty:
+            day_structure = build_daily_structure(upto)
+            if not day_structure.empty:
+                structure_row = day_structure.iloc[0]
         rows.append(_annotate_row(candidate, candle_time, day, structure_row))
     return pd.DataFrame(rows, columns=STRUCTURE_CONTEXT_COLUMNS)
 
@@ -165,6 +173,21 @@ def _alignment(side: str, manipulation_label: str) -> str:
     if manipulation_label in {"no_sweep", "unknown"}:
         return "neutral"
     return "neutral"
+
+
+def _ensure_datetime_index(market_data: pd.DataFrame) -> pd.DataFrame:
+    if market_data is None or market_data.empty:
+        return pd.DataFrame()
+    data = market_data.copy()
+    if not isinstance(data.index, pd.DatetimeIndex):
+        for column in ("Date", "time", "timestamp"):
+            if column in data.columns:
+                data[column] = pd.to_datetime(data[column], errors="coerce")
+                data = data.dropna(subset=[column]).set_index(column)
+                break
+    if not isinstance(data.index, pd.DatetimeIndex):
+        raise ValueError("market_data must have a DatetimeIndex or a Date/time column")
+    return data.sort_index()
 
 
 def _float_or_none(value: object) -> float | None:
