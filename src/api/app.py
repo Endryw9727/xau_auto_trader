@@ -102,6 +102,10 @@ async def montecarlo(request: Request):
     return await _call(request, service.montecarlo, allow_body=True)
 
 
+async def regime_conditional(request: Request):
+    return await _call(request, service.regime_conditional, allow_body=True)
+
+
 async def rejection_taxonomy(request: Request):
     return await _call(request, service.bot_rejection_taxonomy)
 
@@ -127,6 +131,7 @@ routes = [
     Route("/api/edge/significance-audit", significance_audit, methods=["POST"]),
     Route("/api/edge/overfitting", overfitting, methods=["POST"]),
     Route("/api/edge/montecarlo", montecarlo, methods=["POST"]),
+    Route("/api/edge/regime-conditional", regime_conditional, methods=["POST"]),
     Route("/api/bot/rejection-taxonomy", rejection_taxonomy, methods=["GET"]),
     Route("/api/bot/market-structure", market_structure, methods=["GET"]),
     Route("/api/bot/quality-review", quality_review, methods=["GET"]),

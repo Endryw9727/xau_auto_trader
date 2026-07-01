@@ -27,6 +27,7 @@ from scripts.run_edge_significance_audit import run_edge_significance_audit
 from scripts.run_ny_conditional_edge import run_ny_conditional_edge
 from scripts.run_overfitting_audit import run_overfitting_audit
 from scripts.run_overnight_anomaly import run_overnight_anomaly
+from scripts.run_regime_conditional_audit import run_regime_conditional_audit
 from scripts.run_session_edge_lab import run_session_edge_lab
 from scripts.run_strategy_montecarlo import run_strategy_montecarlo
 from scripts.run_v51_demo_readiness_report import run_v51_demo_readiness_report
@@ -141,7 +142,7 @@ def _refresh_async(key: Any, compute) -> None:
 
 def warm_cache() -> None:
     """Pre-compute the heavy default-config endpoints so the first UI call is fast."""
-    for func in (significance_audit, session_scan, ny_conditional, overnight, overfitting, montecarlo):
+    for func in (significance_audit, session_scan, ny_conditional, overnight, overfitting, montecarlo, regime_conditional):
         try:
             func()
         except Exception:  # noqa: BLE001 - warming is best effort
@@ -278,6 +279,29 @@ def montecarlo(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) ->
                 "rows": rows,
             }
     return _cached_call("montecarlo", config_path, overrides, compute)
+
+
+def regime_conditional(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -> dict[str, Any]:
+    """Volatility-regime conditional edge audit (walk-forward + MTC + DSR/PBO)."""
+    def compute() -> dict[str, Any]:
+        with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
+            run_regime_conditional_audit(config_path=cfg, output_dir=out)
+            summary = _read_records(Path(out) / "regime_conditional_summary.csv")
+            detail = _read_records(Path(out) / "regime_conditional_detail.csv")
+            row = summary[0] if summary else {}
+            return {
+                "status": row.get("status", "OK"),
+                "live_armed": False,
+                "family_size": row.get("family_size"),
+                "walk_forward_robust": row.get("walk_forward_robust"),
+                "mtc_survivors": row.get("mtc_survivors"),
+                "deflated_sharpe_ratio": row.get("deflated_sharpe_ratio"),
+                "probability_of_backtest_overfitting": row.get("probability_of_backtest_overfitting"),
+                "best_strategy": row.get("best_strategy"),
+                "best_sharpe": row.get("best_sharpe"),
+                "rows": detail,
+            }
+    return _cached_call("regime_conditional", config_path, overrides, compute)
 
 
 def bot_rejection_taxonomy(*, candles: int = 200) -> dict[str, Any]:

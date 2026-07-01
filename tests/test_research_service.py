@@ -110,6 +110,16 @@ def test_montecarlo_shape(tmp_path):
     json.dumps(out, allow_nan=False)  # strict JSON
 
 
+def test_regime_conditional_shape(tmp_path):
+    out = service.regime_conditional(config_path=_config(tmp_path))
+    assert out["live_armed"] is False
+    assert out["status"] in {"OK", "INSUFFICIENT_DATA"}
+    assert "mtc_survivors" in out
+    assert "deflated_sharpe_ratio" in out
+    assert isinstance(out["rows"], list)
+    json.dumps(out, allow_nan=False)  # strict JSON
+
+
 def test_overrides_are_applied(tmp_path):
     # A very high threshold must wipe out any robust edge.
     out = service.significance_audit(config_path=_config(tmp_path), t_stat_threshold=99.0)
