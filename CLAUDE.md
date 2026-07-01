@@ -150,6 +150,7 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Audit test multipli | `src/analysis/multiple_testing.py`, `scripts/run_edge_significance_audit.py` |
 | Motore anti-overfitting (PSR/DSR, PBO/CSCV, CPCV) | `src/analysis/overfitting.py` |
 | Audit overfitting famiglia edge (DSR+PBO) | `src/analysis/edge_overfitting.py`, `scripts/run_overfitting_audit.py` |
+| Aspettativa + Monte Carlo (win-rate pareggio, distribuzione esiti) | `src/analysis/trade_simulation.py` |
 | Anomalia overnight (teoria) | `src/analysis/overnight_anomaly.py`, `scripts/run_overnight_anomaly.py` |
 | Fetch dati OHLCV (ricerca) | `scripts/fetch_yahoo_ohlcv.py` |
 | Normalizza CSV broker | `scripts/normalize_broker_csv.py` |
