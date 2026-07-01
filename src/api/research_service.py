@@ -28,6 +28,7 @@ from scripts.run_ny_conditional_edge import run_ny_conditional_edge
 from scripts.run_overfitting_audit import run_overfitting_audit
 from scripts.run_overnight_anomaly import run_overnight_anomaly
 from scripts.run_session_edge_lab import run_session_edge_lab
+from scripts.run_strategy_montecarlo import run_strategy_montecarlo
 from scripts.run_v51_demo_readiness_report import run_v51_demo_readiness_report
 from scripts.run_v51_market_structure_diagnostics import run_v51_market_structure_diagnostics
 from scripts.run_v51_quality_review import run_v51_quality_review
@@ -140,7 +141,7 @@ def _refresh_async(key: Any, compute) -> None:
 
 def warm_cache() -> None:
     """Pre-compute the heavy default-config endpoints so the first UI call is fast."""
-    for func in (significance_audit, session_scan, ny_conditional, overnight, overfitting):
+    for func in (significance_audit, session_scan, ny_conditional, overnight, overfitting, montecarlo):
         try:
             func()
         except Exception:  # noqa: BLE001 - warming is best effort
@@ -256,6 +257,27 @@ def overfitting(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -
                 "strategies": strategies,
             }
     return _cached_call("overfitting", config_path, overrides, compute)
+
+
+def montecarlo(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -> dict[str, Any]:
+    """Per-strategy bootstrap Monte Carlo outcome table for the edge family."""
+    def compute() -> dict[str, Any]:
+        with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
+            run_strategy_montecarlo(config_path=cfg, output_dir=out)
+            summary = _read_records(Path(out) / "strategy_montecarlo_summary.csv")
+            rows = _read_records(Path(out) / "strategy_montecarlo.csv")
+            row = summary[0] if summary else {}
+            return {
+                "status": row.get("status", "OK"),
+                "live_armed": False,
+                "n_strategies": row.get("n_strategies"),
+                "n_profitable": row.get("n_profitable"),
+                "best_strategy": row.get("best_strategy"),
+                "best_prob_profit": row.get("best_prob_profit"),
+                "best_expectancy_r": row.get("best_expectancy_r"),
+                "rows": rows,
+            }
+    return _cached_call("montecarlo", config_path, overrides, compute)
 
 
 def bot_rejection_taxonomy(*, candles: int = 200) -> dict[str, Any]:
