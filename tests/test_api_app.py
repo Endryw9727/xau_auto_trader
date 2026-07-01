@@ -23,6 +23,7 @@ def test_app_exposes_health_route():
     paths = {route.path for route in app.routes}
     assert "/api/health" in paths
     assert "/api/edge/significance-audit" in paths
+    assert "/api/edge/overfitting" in paths
 
 
 def test_warm_cache_helper_is_non_blocking():

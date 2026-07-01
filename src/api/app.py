@@ -94,6 +94,10 @@ async def significance_audit(request: Request):
     return await _call(request, service.significance_audit, allow_body=True)
 
 
+async def overfitting(request: Request):
+    return await _call(request, service.overfitting, allow_body=True)
+
+
 async def rejection_taxonomy(request: Request):
     return await _call(request, service.bot_rejection_taxonomy)
 
@@ -117,6 +121,7 @@ routes = [
     Route("/api/edge/ny-conditional", ny_conditional, methods=["POST"]),
     Route("/api/edge/overnight", overnight, methods=["POST"]),
     Route("/api/edge/significance-audit", significance_audit, methods=["POST"]),
+    Route("/api/edge/overfitting", overfitting, methods=["POST"]),
     Route("/api/bot/rejection-taxonomy", rejection_taxonomy, methods=["GET"]),
     Route("/api/bot/market-structure", market_structure, methods=["GET"]),
     Route("/api/bot/quality-review", quality_review, methods=["GET"]),
