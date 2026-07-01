@@ -1,5 +1,6 @@
 import json
 import math
+import time
 from pathlib import Path
 
 import numpy as np
@@ -137,6 +138,60 @@ def test_cache_bypassed_for_custom_config(tmp_path):
 def test_cache_roundtrip_for_default_config():
     service._cache_put("unit_test_marker", service.DEFAULT_EDGE_CONFIG, {}, {"ok": 1})
     assert service._cache_get("unit_test_marker", service.DEFAULT_EDGE_CONFIG, {}) == {"ok": 1}
+
+
+def test_cached_call_computes_once_when_warm():
+    # Cold call computes; a second call with unchanged data returns the cached
+    # result WITHOUT recomputing.
+    calls = {"n": 0}
+
+    def compute():
+        calls["n"] += 1
+        return {"n": calls["n"]}
+
+    r1 = service._cached_call("t_swr_warm", service.DEFAULT_EDGE_CONFIG, {}, compute)
+    r2 = service._cached_call("t_swr_warm", service.DEFAULT_EDGE_CONFIG, {}, compute)
+    assert r1 == r2 == {"n": 1}
+    assert calls["n"] == 1
+
+
+def test_cached_call_serves_stale_then_refreshes_in_background():
+    # A stale entry (bogus signature) must be served immediately, with a
+    # background recompute updating the cache for the next call.
+    key = service._cache_key("t_swr_stale", service.DEFAULT_EDGE_CONFIG, {})
+    with service._cache_lock:
+        service._cache[key] = (time.time(), (("bogus.csv", 1),), {"v": "old"})
+    seen = {"n": 0}
+
+    def compute():
+        seen["n"] += 1
+        return {"v": "new"}
+
+    out = service._cached_call("t_swr_stale", service.DEFAULT_EDGE_CONFIG, {}, compute)
+    assert out == {"v": "old"}  # stale result served instantly, no blocking compute
+
+    fresh = None
+    for _ in range(100):
+        with service._cache_lock:
+            fresh = service._cache[key][2]
+        if fresh == {"v": "new"}:
+            break
+        time.sleep(0.05)
+    assert fresh == {"v": "new"}
+    assert seen["n"] == 1
+
+
+def test_cached_call_bypasses_cache_for_custom_config(tmp_path):
+    custom = tmp_path / "edge_lab.yaml"
+    calls = {"n": 0}
+
+    def compute():
+        calls["n"] += 1
+        return {"n": calls["n"]}
+
+    service._cached_call("t_swr_custom", custom, {}, compute)
+    service._cached_call("t_swr_custom", custom, {}, compute)
+    assert calls["n"] == 2  # custom configs are never cached
 
 
 def test_warm_cache_is_callable():

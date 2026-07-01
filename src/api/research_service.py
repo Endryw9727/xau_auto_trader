@@ -41,12 +41,17 @@ API_VERSION = "1.0.0"
 _CONFIG_OVERRIDE_KEYS = ("min_trades", "oos_fraction", "t_stat_threshold")
 
 # Heavy endpoints re-run the full edge computation, which is slow on real data
-# and can exceed an HTTP client / tunnel timeout. Cache results (only for the
-# default config) keyed on the data files' modification times, so the first call
-# computes and every later call is instant until the data changes.
-_CACHE_TTL_SECONDS = 900
-_cache: dict[Any, tuple[float, Any]] = {}
+# and can exceed an HTTP client / tunnel timeout. We cache results for the default
+# config with a STALE-WHILE-REVALIDATE policy: the first call computes; every
+# later call returns the last result INSTANTLY and, if the underlying data
+# changed, refreshes in the background. This is essential on a live VPS where the
+# MT5 feed keeps rewriting ``data/raw/*.csv`` — an mtime-keyed cache would
+# otherwise miss on every request and block the caller for the full compute time.
+_CACHE_TTL_SECONDS = 1800
+# key -> (computed_at, data_signature, result)
+_cache: dict[Any, tuple[float, tuple, Any]] = {}
 _cache_lock = threading.Lock()
+_refreshing: set[Any] = set()
 
 
 def _data_signature() -> tuple:
@@ -58,10 +63,12 @@ def _data_signature() -> tuple:
 
 def _cache_key(name: str, config_path: str | Path, overrides: dict[str, Any]) -> Any | None:
     # Only cache the default config (tests pass temporary configs and must not
-    # share cached results).
+    # share cached results). The data signature is deliberately NOT part of the
+    # key: it is stored alongside the value so a changing signature refreshes the
+    # entry in place instead of orphaning it (see _cached_call).
     if Path(config_path) != DEFAULT_EDGE_CONFIG:
         return None
-    return (name, _data_signature(), tuple(sorted((overrides or {}).items())))
+    return (name, tuple(sorted((overrides or {}).items())))
 
 
 def _cache_get(name: str, config_path: str | Path, overrides: dict[str, Any]) -> Any | None:
@@ -69,9 +76,9 @@ def _cache_get(name: str, config_path: str | Path, overrides: dict[str, Any]) ->
     if key is None:
         return None
     with _cache_lock:
-        hit = _cache.get(key)
-    if hit is not None and (time.time() - hit[0]) < _CACHE_TTL_SECONDS:
-        return hit[1]
+        entry = _cache.get(key)
+    if entry is not None and (time.time() - entry[0]) < _CACHE_TTL_SECONDS:
+        return entry[2]
     return None
 
 
@@ -80,7 +87,54 @@ def _cache_put(name: str, config_path: str | Path, overrides: dict[str, Any], re
     if key is None:
         return
     with _cache_lock:
-        _cache[key] = (time.time(), result)
+        _cache[key] = (time.time(), _data_signature(), result)
+
+
+def _cached_call(name: str, config_path: str | Path, overrides: dict[str, Any], compute) -> Any:
+    """Stale-while-revalidate cache around a heavy ``compute()`` for the default config.
+
+    - Cold cache: compute synchronously (the only path that can block the caller).
+    - Warm, data unchanged, within TTL: return the cached result instantly.
+    - Warm but stale (data changed or TTL elapsed): return the last result
+      immediately AND recompute in the background so the next call is fresh.
+    """
+    key = _cache_key(name, config_path, overrides)
+    if key is None:
+        return compute()  # never cache custom configs (tests / ad-hoc runs)
+    sig = _data_signature()
+    with _cache_lock:
+        entry = _cache.get(key)
+    if entry is not None:
+        computed_at, entry_sig, result = entry
+        fresh = entry_sig == sig and (time.time() - computed_at) < _CACHE_TTL_SECONDS
+        if not fresh:
+            _refresh_async(key, compute)
+        return result
+    result = compute()
+    with _cache_lock:
+        _cache[key] = (time.time(), sig, result)
+    return result
+
+
+def _refresh_async(key: Any, compute) -> None:
+    """Recompute ``key`` in a background thread, coalescing concurrent refreshes."""
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def _worker() -> None:
+        try:
+            result = compute()
+            with _cache_lock:
+                _cache[key] = (time.time(), _data_signature(), result)
+        except Exception:  # noqa: BLE001 - background refresh is best effort
+            pass
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def warm_cache() -> None:
@@ -121,74 +175,62 @@ def list_instruments(config_path: str | Path = DEFAULT_EDGE_CONFIG) -> dict[str,
 
 def session_scan(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -> dict[str, Any]:
     """Run the multi-instrument session edge scan and return verdicts + detail."""
-    cached = _cache_get("session_scan", config_path, overrides)
-    if cached is not None:
-        return cached
-    with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
-        run_session_edge_lab(config_path=cfg, output_dir=out)
-        result = {
-            "status": "OK",
-            "live_armed": False,
-            "verdicts": _read_records(Path(out) / "session_edge_verdicts.csv"),
-            "detail": _read_records(Path(out) / "session_edge_detail.csv"),
-        }
-    _cache_put("session_scan", config_path, overrides, result)
-    return result
+    def compute() -> dict[str, Any]:
+        with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
+            run_session_edge_lab(config_path=cfg, output_dir=out)
+            return {
+                "status": "OK",
+                "live_armed": False,
+                "verdicts": _read_records(Path(out) / "session_edge_verdicts.csv"),
+                "detail": _read_records(Path(out) / "session_edge_detail.csv"),
+            }
+    return _cached_call("session_scan", config_path, overrides, compute)
 
 
 def ny_conditional(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -> dict[str, Any]:
     """Run the NY conditional edge scan."""
-    cached = _cache_get("ny_conditional", config_path, overrides)
-    if cached is not None:
-        return cached
-    with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
-        run_ny_conditional_edge(config_path=cfg, output_dir=out)
-        result = {
-            "status": "OK",
-            "live_armed": False,
-            "verdicts": _read_records(Path(out) / "ny_conditional_verdicts.csv"),
-            "detail": _read_records(Path(out) / "ny_conditional_detail.csv"),
-        }
-    _cache_put("ny_conditional", config_path, overrides, result)
-    return result
+    def compute() -> dict[str, Any]:
+        with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
+            run_ny_conditional_edge(config_path=cfg, output_dir=out)
+            return {
+                "status": "OK",
+                "live_armed": False,
+                "verdicts": _read_records(Path(out) / "ny_conditional_verdicts.csv"),
+                "detail": _read_records(Path(out) / "ny_conditional_detail.csv"),
+            }
+    return _cached_call("ny_conditional", config_path, overrides, compute)
 
 
 def overnight(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -> dict[str, Any]:
     """Run the pre-registered overnight/intraday anomaly test."""
-    cached = _cache_get("overnight", config_path, overrides)
-    if cached is not None:
-        return cached
-    with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
-        run_overnight_anomaly(config_path=cfg, output_dir=out)
-        rows = _read_records(Path(out) / "overnight_anomaly_audit.csv")
-        result = {
-            "status": "OK",
-            "live_armed": False,
-            "rows": rows,
-            "mtc_survivors": int(sum(1 for r in rows if r.get("mtc_robust"))),
-        }
-    _cache_put("overnight", config_path, overrides, result)
-    return result
+    def compute() -> dict[str, Any]:
+        with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
+            run_overnight_anomaly(config_path=cfg, output_dir=out)
+            rows = _read_records(Path(out) / "overnight_anomaly_audit.csv")
+            return {
+                "status": "OK",
+                "live_armed": False,
+                "rows": rows,
+                "mtc_survivors": int(sum(1 for r in rows if r.get("mtc_robust"))),
+            }
+    return _cached_call("overnight", config_path, overrides, compute)
 
 
 def significance_audit(*, config_path: str | Path = DEFAULT_EDGE_CONFIG, **overrides) -> dict[str, Any]:
     """Run the multiple-testing significance audit (the headline verdict)."""
-    cached = _cache_get("significance_audit", config_path, overrides)
-    if cached is not None:
-        return cached
-    with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
-        run_edge_significance_audit(config_path=cfg, output_dir=out)
-        rows = _read_records(Path(out) / "edge_significance_audit.csv")
-        result = {
-            "status": "OK",
-            "live_armed": False,
-            "family_size": len(rows),
-            "walk_forward_robust": int(sum(1 for r in rows if r.get("robust_edge"))),
-            "mtc_survivors": int(sum(1 for r in rows if r.get("mtc_robust"))),
-            "rows": rows,
-        }
-    _cache_put("significance_audit", config_path, overrides, result)
-    return result
+    def compute() -> dict[str, Any]:
+        with _prepared_config(config_path, overrides) as cfg, tempfile.TemporaryDirectory() as out:
+            run_edge_significance_audit(config_path=cfg, output_dir=out)
+            rows = _read_records(Path(out) / "edge_significance_audit.csv")
+            return {
+                "status": "OK",
+                "live_armed": False,
+                "family_size": len(rows),
+                "walk_forward_robust": int(sum(1 for r in rows if r.get("robust_edge"))),
+                "mtc_survivors": int(sum(1 for r in rows if r.get("mtc_robust"))),
+                "rows": rows,
+            }
+    return _cached_call("significance_audit", config_path, overrides, compute)
 
 
 def bot_rejection_taxonomy(*, candles: int = 200) -> dict[str, Any]:
