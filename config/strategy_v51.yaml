@@ -50,3 +50,13 @@ use_ai_reasoning_filter: false
 ai_reasoning_report_only: true
 min_ai_confidence_to_trade: 70
 min_trade_quality_score: 70
+
+# Protective demo guardrails (Phase 3 hardening).
+# All OFF by default: when disabled they add no behavior. They only ever BLOCK a
+# new demo order, never relax an existing gate, and never arm execution.
+news_block_enabled: false
+news_block_windows: []          # e.g. ["12:25-12:35", "14:00-14:15"] in UTC
+daily_loss_lock_enabled: false
+max_daily_loss_currency: 0.0    # account-currency loss budget per day (0 = unused)
+drawdown_lock_enabled: false
+min_equity_floor: 0.0           # absolute equity floor; block below it (0 = unused)

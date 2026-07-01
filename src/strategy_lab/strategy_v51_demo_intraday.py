@@ -23,6 +23,7 @@ from src.strategy_lab import strategy_v50_pine
 
 STRATEGY_NAME = "demo_intraday_candidate"
 DEFAULT_V51_CONFIG_PATH = Path("config/strategy_v51.yaml")
+DEFAULT_V51_LOCAL_CONFIG_PATH = Path("config/strategy_v51.local.yaml")
 DEFAULT_V51_REPORT_DIR = Path("reports/strategy_lab")
 DEFAULT_V51_SIGNAL_LOG_PATH = DEFAULT_V51_REPORT_DIR / "v51_demo_intraday_signal_log.csv"
 DEFAULT_V50_SIGNAL_LOG_PATH = DEFAULT_V51_REPORT_DIR / "v50_high_margin_signal_log.csv"
@@ -106,6 +107,14 @@ class V51DemoIntradayConfig:
     ai_reasoning_report_only: bool
     min_ai_confidence_to_trade: float
     min_trade_quality_score: float
+    # Protective demo guardrails (Phase 3 hardening). Disabled by default so the
+    # baseline behavior is unchanged; they can only block, never relax a gate.
+    news_block_enabled: bool = False
+    news_block_windows: tuple[str, ...] = ()
+    daily_loss_lock_enabled: bool = False
+    max_daily_loss_currency: float = 0.0
+    drawdown_lock_enabled: bool = False
+    min_equity_floor: float = 0.0
 
     @property
     def strategy_config(self) -> StrategyConfig:
@@ -121,12 +130,27 @@ class V51DemoIntradayConfig:
 
 
 def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntradayConfig:
-    """Load V51 config and validate demo-only safety gates."""
+    """Load V51 config (with optional local override) and validate safety gates.
+
+    A gitignored sibling ``*.local.yaml`` next to the config is merged on top of
+    it when present, so demo execution can be armed on the VPS without editing
+    the tracked config. ``allow_real_live`` must remain false in both files.
+    """
     config_path = Path(path)
     with config_path.open("r", encoding="utf-8") as file:
-        raw = yaml.safe_load(file) or {}
-    if not isinstance(raw, dict):
+        base_raw = yaml.safe_load(file) or {}
+    if not isinstance(base_raw, dict):
         raise ValueError(f"Invalid V51 config: {config_path}")
+
+    local_path = _local_v51_config_path(config_path)
+    local_raw = {}
+    if local_path.exists():
+        with local_path.open("r", encoding="utf-8") as file:
+            local_raw = yaml.safe_load(file) or {}
+        if not isinstance(local_raw, dict):
+            raise ValueError(f"Invalid V51 local config: {local_path}")
+    _validate_v51_config_source_safety(base_raw, local_raw)
+    raw = {**base_raw, **local_raw}
 
     allowed_sessions = raw.get("allowed_sessions", ("LONDON", "LONDON/US", "NEW YORK"))
     if isinstance(allowed_sessions, str):
@@ -176,6 +200,12 @@ def load_v51_config(path: str | Path = DEFAULT_V51_CONFIG_PATH) -> V51DemoIntrad
         ai_reasoning_report_only=_as_bool(raw.get("ai_reasoning_report_only", True)),
         min_ai_confidence_to_trade=float(raw.get("min_ai_confidence_to_trade", 70)),
         min_trade_quality_score=float(raw.get("min_trade_quality_score", 70)),
+        news_block_enabled=_as_bool(raw.get("news_block_enabled", False)),
+        news_block_windows=_as_tuple(raw.get("news_block_windows", ())) if raw.get("news_block_windows") else (),
+        daily_loss_lock_enabled=_as_bool(raw.get("daily_loss_lock_enabled", False)),
+        max_daily_loss_currency=float(raw.get("max_daily_loss_currency", 0.0)),
+        drawdown_lock_enabled=_as_bool(raw.get("drawdown_lock_enabled", False)),
+        min_equity_floor=float(raw.get("min_equity_floor", 0.0)),
     )
     validate_v51_config(config)
     return config
@@ -225,6 +255,13 @@ def validate_v51_config(config: V51DemoIntradayConfig) -> None:
         raise ValueError("min_ai_confidence_to_trade must be between 0 and 100")
     if not 0 <= config.min_trade_quality_score <= 100:
         raise ValueError("min_trade_quality_score must be between 0 and 100")
+    if config.max_daily_loss_currency < 0:
+        raise ValueError("max_daily_loss_currency cannot be negative")
+    if config.min_equity_floor < 0:
+        raise ValueError("min_equity_floor cannot be negative")
+    for window in config.news_block_windows:
+        if not _is_valid_news_window(window):
+            raise ValueError(f"invalid news_block_window: {window!r} (expected HH:MM-HH:MM)")
 
 
 def generate_signal(df: pd.DataFrame, config: StrategyConfig | None = None) -> TradingSignal:
@@ -660,6 +697,39 @@ def _as_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def _local_v51_config_path(config_path: Path) -> Path:
+    """Return the gitignored sibling local override path for a V51 config."""
+    if config_path == DEFAULT_V51_CONFIG_PATH:
+        return DEFAULT_V51_LOCAL_CONFIG_PATH
+    return config_path.with_name(f"{config_path.stem}.local{config_path.suffix}")
+
+
+def _validate_v51_config_source_safety(base: dict[str, Any], local: dict[str, Any]) -> None:
+    """Enforce that real live can never be enabled from either config source."""
+    if _as_bool(base.get("allow_real_live", False)) or _as_bool(local.get("allow_real_live", False)):
+        raise PermissionError("allow_real_live must remain false")
+
+
+def _is_valid_news_window(window: Any) -> bool:
+    """Validate a 'HH:MM-HH:MM' news window string (24h clock)."""
+    text = str(window).strip()
+    if text.count("-") != 1:
+        return False
+    start, end = text.split("-")
+    return _is_valid_hhmm(start) and _is_valid_hhmm(end)
+
+
+def _is_valid_hhmm(value: str) -> bool:
+    parts = value.strip().split(":")
+    if len(parts) != 2:
+        return False
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return False
+    return 0 <= hour <= 23 and 0 <= minute <= 59
 
 
 def _as_tuple(value: Any) -> tuple[str, ...]:

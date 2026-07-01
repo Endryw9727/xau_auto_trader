@@ -182,6 +182,288 @@ Quando `use_mtf_context_filter` e `true`, un BUY passa solo con
 `mtf_final_bias`, `mtf_filter_enabled`, `mtf_filter_passed` e
 `mtf_filter_reason`.
 
+## V51 Rejection Diagnostics
+
+Report diagnostico read-only che raggruppa i segnali V51 rifiutati in categorie
+stabili, cosi e immediato vedere quale filtro blocca di piu e se quel blocco e
+safety-critical o una soglia regolabile da rivedere. Non modifica config, non
+abbassa filtri e non invia ordini.
+
+    python scripts/run_v51_rejection_diagnostics.py
+    python scripts/run_v51_rejection_diagnostics.py --candles 400
+    python scripts/run_v51_rejection_diagnostics.py --reasons-csv reports/demo_execution/v51_demo_execution_log.csv
+
+Output:
+- reports/diagnostics/v51_rejection_taxonomy.csv
+- reports/diagnostics/v51_rejection_taxonomy_latest.txt
+
+Categorie: `score_low`, `score_gap_low`, `trend_weak`, `setup_unconfirmed`,
+`quality_guard`, `rr_low`, `spread_slippage`, `session_blocked`, `daily_limit`,
+`mtf_misaligned`, `liquidity_sweep`, `distance_from_level`, `freshness_time`,
+`duplicate`, `no_directional_score`, `accepted`, `other`. Ogni categoria ha una
+`disposition`: `safety_critical`, `review_candidate`, `threshold` o
+`informational`.
+
+## V51 Market Structure Diagnostics
+
+Report read-only che unisce i candidati V51 al market structure per sessione
+(Asia accumulation, London manipulation/sweep, New York reversal). Per ogni
+giorno calcola il range Asia, se la liquidita Asia e stata spazzata (sweep) e da
+quale lato, se e stata reclaimata, la direzione di New York; per ogni candidato
+calcola la distanza dal livello chiave piu vicino e se la direzione e allineata
+o contraria allo sweep-reclaim. Non modifica config e non invia ordini.
+
+    python scripts/run_v51_market_structure_diagnostics.py
+    python scripts/run_v51_market_structure_diagnostics.py --candles 600
+
+Output:
+- reports/diagnostics/v51_market_structure_context.csv
+- reports/diagnostics/v51_market_structure_summary.csv
+- reports/diagnostics/v51_market_structure_latest.txt
+
+`manipulation_label`: `no_sweep`, `sweep_not_reclaimed`,
+`london_sweep_low_reclaimed` (contesto rialzista), `london_sweep_high_reclaimed`
+(contesto ribassista), `london_sweep_both_reclaimed`. `structure_alignment`:
+`aligned`, `counter`, `neutral`.
+
+## V51 Outcome Diagnostics (validazione teorica)
+
+Report read-only di validazione quantitativa: simula l'esito teorico dei
+candidati V51 camminando in avanti sulle candele chiuse successive (nessun
+lookahead; su candela ambigua si assume lo stop per primo, scelta conservativa)
+e misura la performance per sessione, per direzione e al variare dello score
+minimo. E backtest/research: non invia ordini e non modifica config.
+
+    python scripts/run_v51_outcome_diagnostics.py
+    python scripts/run_v51_outcome_diagnostics.py --candles 800 --max-horizon 32
+    python scripts/run_v51_outcome_diagnostics.py --accepted-only
+
+Output:
+- reports/diagnostics/v51_outcomes.csv
+- reports/diagnostics/v51_performance_by_session.csv
+- reports/diagnostics/v51_performance_by_side.csv
+- reports/diagnostics/v51_performance_score_curve.csv
+- reports/diagnostics/v51_outcome_latest.txt
+
+Le metriche (`win_rate`, `avg_r`, `total_r`, `expectancy`) sono teoriche e
+calcolate sull'intero decision log storico, non sui soli candidati live gated:
+servono come segnale di ricerca, non come metrica di produzione.
+
+## V51 Quality Review
+
+Report read-only di FASE 2 che misura la qualita dei candidati V51: performance
+per bucket di risk/reward, falsi negativi dei quality guard (candidati bloccati
+dai filtri discrezionali che in teoria avrebbero vinto) e review dei rifiuti
+(quali categorie di rifiuto sarebbero state profittevoli e meritano una
+revisione umana). Non modifica config e non invia ordini.
+
+    python scripts/run_v51_quality_review.py
+    python scripts/run_v51_quality_review.py --candles 800 --horizon 32
+
+Output:
+- reports/diagnostics/v51_quality_rr.csv
+- reports/diagnostics/v51_quality_rejection_review.csv
+- reports/diagnostics/v51_quality_false_negatives.csv
+- reports/diagnostics/v51_quality_review_latest.txt
+
+Un `review_flag` viene alzato solo per categorie non safety-critical con
+expectancy teorica positiva e campione sufficiente. Le metriche sono teoriche
+sull'intero decision log storico: un risultato positivo e un invito a rivedere un
+filtro, mai a indebolirlo.
+
+## V51 Demo Readiness (report-only)
+
+Report di FASE 3 in sola lettura: la fase report-only che precede qualsiasi demo
+execution. Simula come si comporterebbero i guardrail protettivi (cap trade
+giornaliero, daily-loss lock, drawdown lock) sui candidati ACCEPTED e stampa una
+checklist di sicurezza read-only sui flag di config. NON abilita l'execution,
+NON modifica config o flag e NON invia ordini. Armare la demo resta una
+decisione separata, esplicita e manuale fuori da questo report.
+
+    python scripts/run_v51_demo_readiness_report.py
+    python scripts/run_v51_demo_readiness_report.py --candles 800 --daily-loss-limit-r 2 --max-drawdown-r 4
+
+Output:
+- reports/diagnostics/v51_demo_readiness_equity.csv
+- reports/diagnostics/v51_demo_readiness_checklist.csv
+- reports/diagnostics/v51_demo_readiness_latest.txt
+
+La checklist verifica che `allow_real_live=false`, `demo_only=true`,
+`allow_demo_execution=false`, `execution_enabled=false` e `max_open_positions=1`.
+I budget `daily_loss_limit_r` e `max_drawdown_r` sono parametri del report, non
+config di rischio: servono solo a misurare l'effetto teorico dei lock.
+
+## Multi-Instrument Session Edge Lab
+
+Ricerca read-only di un edge di *session drift* su piu strumenti (XAUUSD, NAS100,
+EURUSD, AUDUSD, GBPUSD, USDJPY, USDCAD e altri). Per ogni sessione
+(Asia/London/New York) e direzione misura l'expectancy entrando all'apertura
+della sessione e uscendo alla chiusura, **al netto dei costi**, e valida con uno
+split out-of-sample: un edge conta solo se e significativo (|t| >= soglia, stesso
+segno) **sia in-sample sia out-of-sample**. Gli strumenti senza edge robusto
+vengono marcati `EXCLUDE`.
+
+Configura strumenti, percorsi CSV e costi in `config/edge_lab.yaml` (i CSV
+vivono in `data/raw/`, gitignorati: vanno messi sulla macchina con i dati).
+
+    python scripts/run_session_edge_lab.py
+
+Output:
+- reports/diagnostics/session_edge_verdicts.csv   (KEEP / EXCLUDE per strumento)
+- reports/diagnostics/session_edge_detail.csv     (per sessione e direzione)
+- reports/diagnostics/session_edge_latest.txt
+
+Il metodo open-to-close e una prima ipotesi volutamente semplice: il modulo e la
+base per ipotesi piu fini (sweep-and-reverse, breakout) sullo stesso framework di
+validazione. Solo ricerca: nessun ordine inviato.
+
+Per popolare i CSV degli altri strumenti senza MT5 puoi scaricare dati intraday
+pubblici da Yahoo Finance:
+
+    python scripts/fetch_yahoo_ohlcv.py --symbols EURUSD AUDUSD GBPUSD USDJPY USDCAD NAS100 --interval 1h --range 730d
+
+Scrive `data/raw/<symbol>.csv` (gitignorati). Attenzione: i timestamp Yahoo sono
+in UTC, mentre le finestre sessione del lab sono in ora broker; i confini sessione
+sono quindi approssimati. Per uso operativo, preferire l'export da MT5 sulla VPS,
+allineato all'ora broker.
+
+## NY Conditional Session Edge
+
+Raffinamento dell'edge lab: invece di tradare sempre una sessione, trada New York
+**solo dato il contesto pre-NY** (direzione di Asia+London, che chiudono prima
+dell'apertura NY — nessun lookahead). Testa due ipotesi (continuation/reversal)
+sullo stesso framework walk-forward + costi. Riusa `config/edge_lab.yaml`.
+
+    python scripts/run_ny_conditional_edge.py
+
+Output:
+- reports/diagnostics/ny_conditional_verdicts.csv
+- reports/diagnostics/ny_conditional_detail.csv
+- reports/diagnostics/ny_conditional_latest.txt
+
+`condition`: PRE_UP / PRE_DOWN; `direction`: LONG / SHORT; `hypothesis`:
+CONTINUATION / REVERSAL. Solo ricerca: nessun ordine inviato. Un KEEP qui e un
+candidato da validare oltre (multiple-testing, dati broker-time, paper), non un
+via libera a tradare.
+
+## Edge Significance Audit (multiple testing)
+
+Cercando edge in molte combinazioni (strumenti x sessioni x direzioni x ipotesi),
+alcune sembrano significative per caso. Questo audit ri-esegue tutte le ricerche,
+raccoglie l'intera famiglia di ipotesi e applica correzioni per test multipli
+(Bonferroni e Benjamini-Hochberg) ai t-stat out-of-sample. Un edge e considerato
+affidabile (`mtc_robust`) solo se e walk-forward robusto **e** sopravvive alla
+correzione.
+
+    python scripts/run_edge_significance_audit.py
+
+Output:
+- reports/diagnostics/edge_significance_audit.csv
+- reports/diagnostics/edge_significance_latest.txt
+
+Un edge walk-forward robusto che NON sopravvive alla correzione e un candidato
+debole, probabilmente gonfiato da quante ipotesi sono state provate: non va
+promosso. Solo ricerca: nessun ordine inviato.
+
+## Normalizzare CSV del broker
+
+I CSV esportati dai broker spesso sono senza intestazione e con nomi tipo
+`EURUSD_M15.csv` / `USATECHIDXUSD_M15.csv`. Questo convertitore aggiunge
+l'intestazione `Date,Open,High,Low,Close,Volume` e li rinomina in
+`data/raw/<symbol>.csv` (mappa anche gli indici: USATECHIDXUSD→nas100,
+USA500IDXUSD→sp500). Gestisce header presente/assente, datetime unico o
+data/ora separate, colonne extra. Solo trasformazione, nessun ordine.
+
+    python scripts/normalize_broker_csv.py --input C:\Users\Administrator\Downloads --output data/raw
+
+## MT5 Multi-Instrument Export (broker-time data)
+
+Esporta in sola lettura i CSV OHLCV broker-time da MT5 per la ricerca edge
+multi-strumento. Per ogni strumento legge le candele chiuse a un timeframe e
+scrive `data/raw/<symbol>.csv` (ora server broker). Non invia ordini; se MT5 non
+e disponibile o un simbolo non torna candele, registra WARNING e lascia il file
+precedente invariato. Va eseguito sulla VPS dove MT5 e installato.
+
+    python scripts/export_mt5_instruments.py --timeframe M15 --bars 50000
+    python scripts/export_mt5_instruments.py --symbols EURUSD NAS100 --map NAS100=US100 EURUSD=EURUSD.r
+
+Output: `data/raw/<symbol>.csv` + `reports/diagnostics/mt5_instrument_export_*`.
+
+Dopo l'export, rilancia la catena di validazione su dati broker-time:
+
+    python scripts/run_session_edge_lab.py
+    python scripts/run_ny_conditional_edge.py
+    python scripts/run_edge_significance_audit.py
+    python scripts/run_overnight_anomaly.py
+
+I nomi simbolo del broker variano: usa `--map PROJ=BROKER` per allinearli (es.
+`XAUUSD=XAUUSD-P`, `NAS100=US100`).
+
+## Overnight/Intraday Anomaly (pre-registered hypothesis)
+
+Test mirato di una singola ipotesi guidata dalla teoria (rendimenti overnight
+positivi, intraday negativi, documentati su oro e indici), con direzioni fissate
+in anticipo: due leg per strumento (OVERNIGHT_LONG, INTRADAY_SHORT). Famiglia di
+test piccola -> penalita per test multipli minima. Riusa `config/edge_lab.yaml` e
+applica la correzione per test multipli.
+
+    python scripts/run_overnight_anomaly.py
+
+Output:
+- reports/diagnostics/overnight_anomaly_audit.csv
+- reports/diagnostics/overnight_anomaly_latest.txt
+
+Nota metodologica: se un leg risulta significativo nella direzione OPPOSTA a
+quella pre-registrata, NON va trattato come edge confermato (sarebbe post-hoc):
+e una nuova ipotesi da validare su dati indipendenti. Solo ricerca: nessun ordine
+inviato.
+
+## Research API (per la console web)
+
+Strato API read-only (Starlette) che espone la pipeline di validazione come JSON,
+così la Research Console (es. costruita su Emergent) passa dai dati mock ai dati
+veri e validati. Non reimplementa la statistica: chiama il codice esistente.
+Nessun endpoint arma l'esecuzione; `/api/health` riporta `live_armed: false`.
+
+    python scripts/serve_research_api.py --host 0.0.0.0 --port 8000
+
+Poi imposta `API_BASE_URL` della console su questo server. Per richiedere un
+token, esporta `RESEARCH_API_TOKEN` (allora ogni richiesta deve avere
+`Authorization: Bearer <token>`). CORS configurabile con `RESEARCH_API_CORS`.
+
+Endpoint principali:
+- `GET /api/health`, `GET /api/instruments`
+- `POST /api/edge/session-scan`, `/api/edge/ny-conditional`, `/api/edge/overnight`
+- `POST /api/edge/significance-audit` (verdetto: `mtc_robust`)
+- `GET /api/bot/rejection-taxonomy`, `/api/bot/market-structure`,
+  `/api/bot/quality-review`, `/api/bot/demo-readiness`
+
+Solo ricerca/diagnostica: l'API non puo inviare ordini ne armare la demo.
+
+## V51 Demo Protective Guardrails
+
+Il layer di esecuzione demo V51 include guardrail protettivi opt-in, tutti
+**disattivati di default** (quando spenti non cambiano il comportamento). Possono
+solo **bloccare** un nuovo ordine demo, mai allentare un gate esistente e mai
+armare l'esecuzione. Si configurano in `config/strategy_v51.yaml`:
+
+    news_block_enabled: false
+    news_block_windows: []          # es. ["12:25-12:35", "14:00-14:15"] in UTC
+    daily_loss_lock_enabled: false
+    max_daily_loss_currency: 0.0    # budget di perdita giornaliera (valuta conto)
+    drawdown_lock_enabled: false
+    min_equity_floor: 0.0           # equity minima: sotto, blocca
+
+- News block: blocca i nuovi ordini se l'ora UTC corrente cade in una finestra
+  news configurata.
+- Daily-loss lock: somma il profitto realizzato dei deal demo V51 del giorno (via
+  MT5 history) e blocca se la perdita supera `max_daily_loss_currency`.
+- Drawdown lock: blocca se l'equity del conto scende sotto `min_equity_floor`.
+
+Questi guardrail non abilitano l'esecuzione: i flag `allow_real_live`,
+`demo_only`, `allow_demo_execution` ed `execution_enabled` restano invariati.
+Armare la demo execution resta una decisione separata, esplicita e manuale.
+
 ## MT5 Multi-Timeframe CSV Update
 
 Lo script aggiorna in modalita read-only i CSV multi-timeframe usati dal report

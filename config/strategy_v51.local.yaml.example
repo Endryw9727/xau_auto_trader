@@ -1,0 +1,29 @@
+# V51 LOCAL OVERRIDE - EXAMPLE / TEMPLATE
+#
+# Copy this file to "config/strategy_v51.local.yaml" ON THE VPS to arm V51 demo
+# execution WITHOUT editing the tracked config/strategy_v51.yaml.
+#
+#     copy config\strategy_v51.local.yaml.example config\strategy_v51.local.yaml
+#
+# The real "config/strategy_v51.local.yaml" is gitignored and must NEVER be
+# committed. Values here are merged on top of config/strategy_v51.yaml.
+#
+# Safety: allow_real_live must stay false (loading raises if it is true in any
+# source). This arms DEMO order submission only. Removing this file (or setting
+# execution_enabled: false) instantly disarms.
+
+# --- Arm demo execution (the two flags) ---
+allow_demo_execution: true
+execution_enabled: true
+
+# Keep these as-is; do not enable real live here or anywhere.
+demo_only: true
+allow_real_live: false
+
+# --- Recommended: enable protective guardrails when arming ---
+daily_loss_lock_enabled: true
+max_daily_loss_currency: 20.0     # stop for the day after this loss (account currency)
+drawdown_lock_enabled: true
+min_equity_floor: 900.0           # block new orders if equity falls below this
+# news_block_enabled: true
+# news_block_windows: ["12:25-12:35", "14:00-14:15"]   # UTC
