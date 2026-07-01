@@ -1,10 +1,11 @@
-"""Audit the volatility-regime-conditioned edge family (read-only).
+"""Audit the market-regime-conditioned edge family (read-only).
 
-Builds each instrument's base session strategies AND their high/low volatility
-regime variants, then runs the full honest stack on the expanded family:
-walk-forward significance, Bonferroni/Benjamini-Hochberg multiple-testing, and
-the Deflated-Sharpe / PBO overfitting audit. Answers: "does conditioning on the
-volatility regime reveal an edge that survives correction, or just more noise?"
+Builds each instrument's base session strategies AND their conditional variants —
+high/low volatility regime and up/down trend regime — then runs the full honest
+stack on the expanded family: walk-forward significance, Bonferroni/
+Benjamini-Hochberg multiple-testing, and the Deflated-Sharpe / PBO overfitting
+audit. Answers: "does conditioning on market regime reveal an edge that survives
+correction, or just more noise?"
 
 It never imports execution code, never sends orders, never changes config.
 Missing CSVs are skipped.
@@ -28,6 +29,7 @@ from src.analysis.multiple_testing import audit_edges
 from src.analysis.overfitting import overfitting_report
 from src.analysis.regime_conditioning import conditional_return_series
 from src.analysis.session_edge_lab import evaluate_net_returns
+from src.analysis.trend_conditioning import trend_return_series
 from src.data_feed.market_data import load_csv_data
 
 
@@ -60,7 +62,11 @@ class RegimeAuditResult:
 
 
 def _build_family(config: dict) -> dict[str, pd.Series]:
-    """Base session strategies + their volatility-regime variants, all instruments."""
+    """Base session strategies + their volatility- and trend-regime variants.
+
+    All conditioning is put in ONE family so the multiple-testing / DSR bars
+    account for every variant searched, not each family in isolation.
+    """
     family: dict[str, pd.Series] = {}
     for instrument in config.get("instruments", []):
         symbol = str(instrument.get("symbol", "?"))
@@ -74,6 +80,7 @@ def _build_family(config: dict) -> dict[str, pd.Series]:
             continue
         family.update(session_return_series(data, symbol, cost_per_trade=cost))
         family.update(conditional_return_series(data, symbol, cost_per_trade=cost))
+        family.update(trend_return_series(data, symbol, cost_per_trade=cost))
     return family
 
 
@@ -140,10 +147,10 @@ def _write_reports(paths: dict[str, Path], detail: pd.DataFrame, summary: dict) 
 def _build_latest_text(detail: pd.DataFrame, summary: dict) -> str:
     survivors = detail[detail["mtc_robust"]] if "mtc_robust" in detail else detail.iloc[0:0]
     lines = [
-        "Volatility-Regime Conditional Edge Audit",
+        "Market-Regime Conditional Edge Audit (volatility + trend)",
         "=" * 72,
         f"Status: {summary.get('status')}",
-        f"Family size (base + regime variants): {summary.get('family_size')}",
+        f"Family size (base + volatility + trend variants): {summary.get('family_size')}",
         f"Walk-forward robust: {summary.get('walk_forward_robust')}",
         f"Multiple-testing survivors (mtc_robust): {summary.get('mtc_survivors')}",
         f"Deflated Sharpe Ratio: {summary.get('deflated_sharpe_ratio')}",
@@ -155,7 +162,7 @@ def _build_latest_text(detail: pd.DataFrame, summary: dict) -> str:
         for _, row in survivors.iterrows():
             lines.append(f"  {row['strategy']:<34} oos_t={row['oos_t_stat']:>6} p={row['p_value']:>8}")
     else:
-        lines.append("Survivors: NONE — conditioning on volatility did not reveal a robust edge.")
+        lines.append("Survivors: NONE — conditioning on market regime did not reveal a robust edge.")
     lines += [
         "",
         "Conditioning grows the hypothesis count, so the multiple-testing and DSR",

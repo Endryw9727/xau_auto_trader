@@ -153,6 +153,7 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Aspettativa + Monte Carlo (win-rate pareggio, distribuzione esiti) | `src/analysis/trade_simulation.py` |
 | Monte Carlo per strategia (bootstrap trade reali) | `src/analysis/strategy_montecarlo.py`, `scripts/run_strategy_montecarlo.py` |
 | Conditioning regime di volatilità (no-lookahead) | `src/analysis/regime_conditioning.py`, `scripts/run_regime_conditional_audit.py` |
+| Conditioning trend/direzione (no-lookahead) | `src/analysis/trend_conditioning.py` |
 | Anomalia overnight (teoria) | `src/analysis/overnight_anomaly.py`, `scripts/run_overnight_anomaly.py` |
 | Fetch dati OHLCV (ricerca) | `scripts/fetch_yahoo_ohlcv.py` |
 | Normalizza CSV broker | `scripts/normalize_broker_csv.py` |
