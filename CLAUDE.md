@@ -156,6 +156,7 @@ Baseline noto: `pytest` = 512 passed (nessun ordine inviato dai diagnostici;
 | Conditioning trend/direzione (no-lookahead) | `src/analysis/trend_conditioning.py` |
 | Simulazione setup con stop/target disegnati (R-multipli, first-touch) | `src/analysis/setup_simulation.py` |
 | Setup liquidity-sweep + reclaim (Asia range, no-lookahead) | `src/analysis/sweep_setup.py` |
+| Audit setup sweep (griglia R:R, walk-forward + MTC + DSR/PBO) | `scripts/run_sweep_setup_audit.py` |
 | Anomalia overnight (teoria) | `src/analysis/overnight_anomaly.py`, `scripts/run_overnight_anomaly.py` |
 | Fetch dati OHLCV (ricerca) | `scripts/fetch_yahoo_ohlcv.py` |
 | Normalizza CSV broker | `scripts/normalize_broker_csv.py` |

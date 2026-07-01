@@ -120,6 +120,16 @@ def test_regime_conditional_shape(tmp_path):
     json.dumps(out, allow_nan=False)  # strict JSON
 
 
+def test_sweep_setup_shape(tmp_path):
+    out = service.sweep_setup(config_path=_config(tmp_path))
+    assert out["live_armed"] is False
+    assert out["status"] in {"OK", "INSUFFICIENT_DATA"}
+    assert "mtc_survivors" in out
+    assert "expected_max_sharpe_under_null" in out
+    assert isinstance(out["rows"], list)
+    json.dumps(out, allow_nan=False)  # strict JSON
+
+
 def test_overrides_are_applied(tmp_path):
     # A very high threshold must wipe out any robust edge.
     out = service.significance_audit(config_path=_config(tmp_path), t_stat_threshold=99.0)
